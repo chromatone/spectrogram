@@ -4,7 +4,6 @@ import { onKeyStroke, useFullscreen, useStorage, useWindowSize } from '@vueuse/c
 import { useClamp } from '@vueuse/math';
 import { AudioMotionAnalyzer } from 'audiomotion-analyzer'
 import ControlRotary from './ControlRotary.vue';
-import { initGetUserMedia } from './utils'
 
 let ctx, tempCanvas, tempCtx, audio
 
@@ -116,6 +115,33 @@ function clear() {
 onKeyStroke(' ', (e) => { e.preventDefault(); paused.value = !paused.value })
 
 onKeyStroke('Enter', (e) => { e.preventDefault(); clear(); })
+
+function initGetUserMedia() {
+  if (typeof window === 'undefined') return;
+
+  window.AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!window.AudioContext) {
+    throw new Error("AudioContext not supported");
+  }
+
+  if (navigator.mediaDevices === undefined) {
+    navigator.mediaDevices = {};
+  }
+
+  if (navigator.mediaDevices.getUserMedia === undefined) {
+    navigator.mediaDevices.getUserMedia = function (constraints) {
+      const getUserMedia = navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+
+      if (!getUserMedia) {
+        throw new Error("getUserMedia is not implemented in this browser");
+      }
+
+      return new Promise((resolve, reject) => {
+        getUserMedia.call(navigator, constraints, resolve, reject);
+      });
+    };
+  }
+}
 </script>
 
 <template lang="pug">
@@ -162,5 +188,26 @@ onKeyStroke('Enter', (e) => { e.preventDefault(); clear(); })
 <style lang="postcss" scoped>
 button {
   @apply p-4;
+}
+
+#screen {
+  @apply bg-black;
+  width: 100%;
+  min-width: 320px;
+  min-height: 100vh;
+  line-height: 1.3;
+  font-family: "Commissioner", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans",
+    "Helvetica Neue", sans-serif;
+  font-size: 1em;
+  font-weight: 400;
+  color: var(--c-text);
+  direction: ltr;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: all 600ms ease;
+  overscroll-behavior-y: none;
 }
 </style>
