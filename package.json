@@ -1,0 +1,49 @@
+{
+	"name": "chromatone-spectrogram",
+	"description": "Time-frequency sound analysis in color",
+	"private": true,
+	"version": "0.0.1",
+	"homepage": "https://spectrogram.chromatone.center",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/chromatone/spectrogram.git"
+	},
+	"keywords": [
+		"vue",
+		"spectrogram",
+		"audio",
+		"music",
+		"sound",
+		"audio analysis",
+		"fft"
+	],
+	"license": "MIT",
+	"author": "Davay42",
+	"type": "module",
+	"engines": {
+		"node": "^20.x"
+	},
+	"packageManager": "pnpm@9.12.2",
+	"scripts": {
+		"dev": "vite",
+		"build": "vite build",
+		"preview": "vite preview"
+	},
+	"dependencies": {
+		"@unocss/reset": "^0.63.3",
+		"@vueuse/core": "^11.1.0",
+		"@vueuse/gesture": "^2.0.0",
+		"audiomotion-analyzer": "4.5.0",
+		"vue": "^3.5.11",
+		"vue-router": "^4.4.5"
+	},
+	"devDependencies": {
+		"@unocss/extractor-pug": "^0.63.3",
+		"@vitejs/plugin-vue": "^5.1.4",
+		"@vue/language-plugin-pug": "^2.1.6",
+		"pug": "^3.0.3",
+		"unocss": "^0.63.3",
+		"vite": "^5.4.8",
+		"vite-plugin-singlefile": "^2.0.2"
+	}
+}
