@@ -1,12 +1,3 @@
-import { ref, watchEffect } from 'vue'
-
-export function useClamp(initialValue, min, max) {
-  const clampedValue = ref(Math.min(Math.max(initialValue, min), max))
-  watchEffect(() => { clampedValue.value = Math.min(Math.max(clampedValue.value, min), max) })
-  return clampedValue
-}
-
-
 export function initGetUserMedia() {
   if (typeof window === 'undefined') return;
 

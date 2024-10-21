@@ -17,6 +17,9 @@ importers:
       '@vueuse/gesture':
         specifier: ^2.0.0
         version: 2.0.0(vue@3.5.12)
+      '@vueuse/math':
+        specifier: ^11.1.0
+        version: 11.1.0(vue@3.5.12)
       audiomotion-analyzer:
         specifier: 4.5.0
         version: 4.5.0
@@ -635,6 +638,9 @@ packages:
     peerDependenciesMeta:
       '@vue/composition-api':
         optional: true
+
+  '@vueuse/math@11.1.0':
+    resolution: {integrity: sha512-pnjB9WBatF5RHHRbMo2P1w/e5m+r0QQJtGcA1cZGrg5yp1itzixLpMZHEmXVWelRTc0Dfn5uyn/sYmBimU1BoA==}
 
   '@vueuse/metadata@11.1.0':
     resolution: {integrity: sha512-l9Q502TBTaPYGanl1G+hPgd3QX5s4CGnpXriVBR5fEZ/goI6fvDaVmIl3Td8oKFurOxTmbXvBPSsgrd6eu6HYg==}
@@ -1685,6 +1691,14 @@ snapshots:
       upath: 2.0.1
       vue: 3.5.12
       vue-demi: 0.14.10(vue@3.5.12)
+
+  '@vueuse/math@11.1.0(vue@3.5.12)':
+    dependencies:
+      '@vueuse/shared': 11.1.0(vue@3.5.12)
+      vue-demi: 0.14.10(vue@3.5.12)
+    transitivePeerDependencies:
+      - '@vue/composition-api'
+      - vue
 
   '@vueuse/metadata@11.1.0': {}
 

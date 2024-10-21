@@ -27,7 +27,7 @@ function viteBuildScript() {
     name: 'vite-build-script',
     transformIndexHtml(html) {
       if (process.env.NODE_ENV === 'production') {
-        return html.replace(/<body>/, `<body><script data-website-id="3f2943a6-8acf-4178-ac46-f03513479632" async src="https://stats.chromatone.center/script.js"></script>`);
+        return html.replace(/<body>/, `<body><script data-website-id="8d7609dd-8a37-4e40-8c1c-f7625d576b10" async src="https://stats.chromatone.center/script.js"></script>`);
       }
       return html;
     },
