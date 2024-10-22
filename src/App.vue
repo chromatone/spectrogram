@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue'
-import { onKeyStroke, useFullscreen, useStorage, useWindowSize } from '@vueuse/core'
+import { onKeyStroke, useFullscreen, useStorage, useTimestamp, useWindowSize } from '@vueuse/core'
 import { useClamp } from '@vueuse/math';
 import { AudioMotionAnalyzer } from 'audiomotion-analyzer'
 import ControlRotary from './ControlRotary.vue';
@@ -15,9 +15,12 @@ const { width, height } = useWindowSize()
 const { toggle } = useFullscreen(screen)
 
 const paused = ref(false)
+const recording = ref(false)
+const recordedWidth = ref(0)
 const showVideo = ref(false)
 const initiated = ref(false)
 const vertical = useStorage('vertical', false)
+const invert = useStorage('vertical', false)
 
 watch([width, height], ([w, h]) => {
   if (!canvasElement.value && !tempCanvas) return
@@ -78,34 +81,85 @@ function initiate() {
   })
 }
 
-const freqPitch = (freq) => 12 * (Math.log(Number(freq) / 440) / Math.log(2))
-const colorIt = (freq, value) => `hsl(${freqPitch(freq) * 30}, ${value * 100}%, ${value * 75}%)`
-const sigmoid = (value) => 1 / (1 + Math.exp(-steepness.value * (value - midpoint.value)))
+let offscreenCanvas, offscreenCtx
 
-const meterWidth = 30
+const startRecording = () => {
+  offscreenCanvas = document.createElement('canvas');
+  offscreenCanvas.width = speed.value;
+  offscreenCanvas.height = height.value;
+  offscreenCtx = offscreenCanvas.getContext('2d');
+  recording.value = Date.now();
+  recordedWidth.value = speed.value;
+  clear()
+};
+
+const stopRecording = () => {
+  recording.value = false;
+  const link = document.createElement('a');
+  link.download = 'canvas_recording.png';
+  link.href = offscreenCanvas.toDataURL();
+  link.click();
+};
+
+let recTemp, recCtx
+
+const time = useTimestamp()
+
+const recordFrame = () => {
+
+  recTemp = recTemp || document.createElement('canvas')
+  recCtx = recCtx || recTemp.getContext('2d')
+
+  const newWidth = recordedWidth.value + speed.value
+
+  recTemp.width = newWidth
+  recTemp.height = offscreenCanvas.height
+  recCtx.drawImage(offscreenCanvas, 0, 0)
+  offscreenCanvas.width = newWidth
+  offscreenCtx.drawImage(recTemp, 0, 0)
+
+  offscreenCtx.drawImage(
+    canvasElement.value,               // Source canvas
+    width.value - speed.value, 0,      // Source area (rightmost line)
+    speed.value, height.value,         // Size of the copied area
+    recordedWidth.value, 0,                  // Destination (append at the right)
+    speed.value, height.value          // Size of the destination area
+  )
+
+  recordedWidth.value = newWidth
+};
+
+const freqPitch = (freq) => 12 * Math.log2(Number(freq) / 440);
+const colorFreq = (freq, value) => `hsl(${freqPitch(freq) * 30}, ${value * 100}%, ${value * 75}%)`;
+const sigmoid = (value) => 1 / (1 + Math.exp(-steepness.value * (value - midpoint.value)));
 
 const onCanvasDraw = (instance) => {
-  if (paused.value) return
-  tempCtx.drawImage(canvasElement.value, 0, 0, width.value, height.value, 0, 0, width.value, height.value)
-  let bars = instance.getBars()
+  if (paused.value) return;
 
-  if (vertical.value) {
-    for (let i = 0; i < bars.length; i++) {
-      ctx.fillStyle = colorIt(bars[i].freq, sigmoid(bars[i].value[0]))
-      ctx.fillRect(i * (width.value / bars.length), 0, width.value / bars.length, meterWidth)
-    }
-    ctx.translate(0, speed.value)
-  } else {
-    for (let i = 0; i < bars.length; i++) {
-      ctx.fillStyle = colorIt(bars[i].freq, sigmoid(bars[i].value[0]))
-      ctx.fillRect(width.value - meterWidth, height.value - (i + 1) * (height.value / bars.length), meterWidth, height.value / bars.length)
-    }
-    ctx.translate(-speed.value, 0)
-  }
+  tempCtx.drawImage(canvasElement.value, 0, 0, width.value, height.value, 0, 0, width.value, height.value);
 
-  ctx.drawImage(tempCanvas, 0, 0, width.value, height.value, 0, 0, width.value, height.value)
+  const bars = instance.getBars().map(bar => colorFreq(bar.freq, sigmoid(bar.value[0])));
+
+  const barWidth = width.value / bars.length;
+  const barHeight = height.value / bars.length;
+
+  bars.forEach((barColor, i) => {
+    const [x, y, w, h] = vertical.value
+      ? [i * barWidth, 0, barWidth, speed.value]
+      : [width.value - speed.value, height.value - (i + 1) * barHeight, speed.value, barHeight];
+    ctx.fillStyle = barColor;
+    ctx.fillRect(x, y, w, h);
+  });
+
+  ctx.translate(vertical.value ? 0 : -speed.value, vertical.value ? speed.value : 0);
+  ctx.drawImage(tempCanvas, 0, 0, width.value, height.value, 0, 0, width.value, height.value);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-}
+
+  if (recording.value) {
+    recordFrame()
+  }
+};
+
 
 function clear() {
   ctx.fillStyle = '#000';
@@ -115,6 +169,7 @@ function clear() {
 onKeyStroke(' ', (e) => { e.preventDefault(); paused.value = !paused.value })
 
 onKeyStroke('Enter', (e) => { e.preventDefault(); clear(); })
+
 
 function initGetUserMedia() {
   if (typeof window === 'undefined') return;
@@ -145,8 +200,8 @@ function initGetUserMedia() {
 </script>
 
 <template lang="pug">
-.flex.flex-col.justify-center.bg-black
-  .fullscreen-container.text-white#screen(ref="screen")
+.flex.flex-col.justify-center.bg-black.relative
+  .fullscreen-container#screen(ref="screen")
     canvas#spectrogram.max-w-full(
       ref="canvasElement"
       :width="width"
@@ -157,7 +212,7 @@ function initGetUserMedia() {
       v-if="!initiated" 
       @click="initiate()") START
 
-  .absolute.top-0.bottom-0.flex.flex-col.text-white.items-center.overscroll-none.overflow-x-hidden.overflow-y-scroll.bg-dark-900.bg-op-20.backdrop-blur.op-40.hover-op-100.transition(v-show="initiated") 
+  .flex.absolute.top-2.left-20.top-4.z-100.text-white.op-20.hover-op-100.transition(v-if="initiated")
     button.text-xl.select-none.cursor-pointer(@pointerdown="paused = !paused")
       .i-la-play(v-if="paused")
       .i-la-pause(v-else)
@@ -166,6 +221,15 @@ function initGetUserMedia() {
       .i-la-arrow-down(v-else)
     button.text-xl.select-none.cursor-pointer(@pointerdown="clear()")
       .i-la-trash-alt
+    button.text-xl.select-none.cursor-pointer.flex.items-center.gap-1(
+      :class="{ 'text-red': recording }"
+      @pointerdown="recording ? stopRecording() : startRecording()")
+      .i-la-circle(v-if="!recording")
+      .i-la-dot-circle(v-else)
+      .p-0.text-sm.font-mono(v-if="recording && recordedWidth") {{ recordedWidth }}px ({{ ((time - recording) / 1000).toFixed(1) }}s)
+
+
+  .absolute.top-14.left-2.flex.flex-col.text-white.items-center.overscroll-none.overflow-x-hidden.overflow-y-scroll.bg-dark-900.bg-op-20.backdrop-blur.op-40.hover-op-100.transition(v-show="initiated") 
     .is-group.flex.flex-col.gap-2
       ControlRotary(v-model="speed" :min="1" :max="5" :step="1" :fixed="0" param="SPEED")
       ControlRotary(v-model="frame" :min="1" :max="4" :step="1" :fixed="0" param="FRAME")
