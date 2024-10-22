@@ -86,24 +86,24 @@ const meterWidth = 30
 
 const onCanvasDraw = (instance) => {
   if (paused.value) return
-  tempCtx.drawImage(canvasElement.value, 0, 0, width.value, height.value)
+  tempCtx.drawImage(canvasElement.value, 0, 0, width.value, height.value, 0, 0, width.value, height.value)
   let bars = instance.getBars()
-  for (let i = 0; i < bars.length; i++) {
-    const centerFreq = (bars[i].freqLo + bars[i].freqHi) / 2
-    ctx.fillStyle = colorIt(centerFreq, sigmoid(bars[i].value[0]))
 
-    if (vertical.value) {
-      ctx.fillRect(i * (width.value / bars.length), 0, width.value / bars.length, meterWidth)
-    } else {
-      ctx.fillRect(width.value - meterWidth, height.value - (i + 1) * (height.value / bars.length), meterWidth, height.value / bars.length)
-    }
-  }
   if (vertical.value) {
+    for (let i = 0; i < bars.length; i++) {
+      ctx.fillStyle = colorIt(bars[i].freq, sigmoid(bars[i].value[0]))
+      ctx.fillRect(i * (width.value / bars.length), 0, width.value / bars.length, meterWidth)
+    }
     ctx.translate(0, speed.value)
   } else {
+    for (let i = 0; i < bars.length; i++) {
+      ctx.fillStyle = colorIt(bars[i].freq, sigmoid(bars[i].value[0]))
+      ctx.fillRect(width.value - meterWidth, height.value - (i + 1) * (height.value / bars.length), meterWidth, height.value / bars.length)
+    }
     ctx.translate(-speed.value, 0)
   }
-  ctx.drawImage(tempCanvas, 0, 0, width.value, height.value)
+
+  ctx.drawImage(tempCanvas, 0, 0, width.value, height.value, 0, 0, width.value, height.value)
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
@@ -152,7 +152,8 @@ function initGetUserMedia() {
       :width="width"
       :height="height"
       )
-    button.absolute.m-auto.top-0.w-full.h-full(
+    button.absolute.m-auto.top-0.w-full.h-full.text-white.text-2xl(
+      title="Press anywhere to start"
       v-if="!initiated" 
       @click="initiate()") START
 
@@ -172,12 +173,13 @@ function initGetUserMedia() {
       ControlRotary(v-model="midpoint" :min="0" :max="1" :step=".0001" param="MIDPOINT" :fixed="2")
       ControlRotary(v-model="smoothing" :min="0" :max="1" :step=".0001" param="SMOOTH" :fixed="2")
     .flex-1
-    button.text-xl.select-none.cursor-pointer(@pointerdown="toggle()")
-      .i-la-expand
+
     button.top-4.right-4.text-xl.select-none.cursor-pointer.transition(
       :style="{ opacity: showVideo ? 1 : 0.2 }"
         @pointerdown="showVideo = !showVideo")
         .i-la-external-link-square-alt
+    button.text-xl.select-none.cursor-pointer(@pointerdown="toggle()")
+      .i-la-expand
   .fixed.overflow-clip.text-white.transition.bottom-4.left-18.rounded-xl.overflow-hidden(v-show="showVideo")
     .relative
       .absolute.p-2.opacity-70.touch-none.select-none.text-md Right click here to enter Picture-In-Picture mode
