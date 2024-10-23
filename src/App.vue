@@ -94,10 +94,16 @@ const startRecording = () => {
 
 const stopRecording = () => {
   recording.value = false;
-  const link = document.createElement('a');
-  link.download = 'canvas_recording.png';
-  link.href = offscreenCanvas.toDataURL();
-  link.click();
+
+  // const link = document.createElement('a');
+  // link.download = 'canvas_recording.png';
+  // link.href = offscreenCanvas.toDataURL();
+  // link.click();
+
+  offscreenCanvas.toBlob((blob) => {
+    const blobUrl = window.URL.createObjectURL(blob);
+    window.open(blobUrl, '_blank');
+  }, 'image/png');
 };
 
 let recTemp, recCtx
