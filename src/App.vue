@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, reactive } from 'vue'
 import { onKeyStroke, useFullscreen, useStorage, useTimestamp, useWindowSize } from '@vueuse/core'
 import { useClamp } from '@vueuse/math';
 import { AudioMotionAnalyzer } from 'audiomotion-analyzer'
@@ -87,7 +87,7 @@ const startVideo = () => {
   recorder.ondataavailable = (event) => {
     const blob = event.data;
     const url = URL.createObjectURL(blob);
-    window.open(url);
+    window.open(url, '_blank');
 
     // const newWindow = window.open('', '_blank', `width=${width.value},height=${height.value + 1}`);
     // newWindow.document.write(`
@@ -112,6 +112,8 @@ const startVideo = () => {
 
 const stopVideo = () => { videoRecording.value = false; recorder?.stop() }
 
+const pics = reactive([])
+
 let offscreenCanvas, offscreenCtx
 
 const startRecording = () => {
@@ -125,23 +127,8 @@ const startRecording = () => {
 
 const stopRecording = () => {
   recording.value = false;
-  const filename = `spectrogram_${new Date().toISOString().slice(0, 19).replace(/T/, '_')}.png`;
   offscreenCanvas.toBlob((blob) => {
-    const blobUrl = window.URL.createObjectURL(blob);
-    window.open(blobUrl);
-    // const newWindow = window.open(undefined, '_blank');
-    // if (newWindow) {
-    //   newWindow.document.write(`
-    //     <html>
-    //       <head>
-    //         <title>${filename}</title>
-    //       </head>
-    //       <body style="margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #222222;">
-    //         <img src="${blobUrl}" alt="${filename}" style="cursor: pointer; max-width: 100%; max-height: 100vh; object-fit: contain;" onclick="const a = document.createElement('a'); a.href = '${blobUrl}'; a.download = '${filename}'; document.body.appendChild(a); a.click();">
-    //       </body>
-    //     </html>
-    //   `);
-    // }
+    pics.push(window.URL.createObjectURL(blob))
   }, 'image/png');
 };
 
@@ -214,6 +201,14 @@ onKeyStroke(' ', (e) => { e.preventDefault(); paused.value = !paused.value })
 
 onKeyStroke('Enter', (e) => { e.preventDefault(); clear(); })
 
+function download(url) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `spectrogram_${new Date().toISOString().slice(0, 19).replace(/T/, '_')}.png`
+  document.body.appendChild(a);
+  a.click();
+}
+
 </script>
 
 <template lang="pug">
@@ -231,38 +226,38 @@ onKeyStroke('Enter', (e) => { e.preventDefault(); clear(); })
       @click="initiate()") START
 
   .flex.absolute.top-4.z-100.text-white.op-20.hover-op-100.transition(v-if="initiated")
-    button.text-xl.select-none.cursor-pointer(@pointerdown="paused = !paused")
+    button.p-4.text-xl.select-none.cursor-pointer(@pointerdown="paused = !paused")
       .i-la-play(v-if="paused")
       .i-la-pause(v-else)
-    button.text-xl.select-none.cursor-pointer(@pointerdown="vertical = !vertical")
+    button.p-4.text-xl.select-none.cursor-pointer(@pointerdown="vertical = !vertical")
       .i-la-arrow-left(v-if="!vertical")
       .i-la-arrow-down(v-else)
-    button.text-xl.select-none.cursor-pointer(@pointerdown="clear()")
+    button.p-4.text-xl.select-none.cursor-pointer(@pointerdown="clear()")
       .i-la-trash-alt
-    button.text-xl.select-none.cursor-pointer(
+    button.p-4.text-xl.select-none.cursor-pointer(
       v-if="isSupported"
       @pointerdown="toggle()")
       .i-la-expand
 
   .flex.absolute.bottom-2.mx-auto.z-100.text-white.op-20.hover-op-100.transition(v-if="initiated")
-    button.text-xl.select-none.cursor-pointer.transition(
+    button.p-4.text-xl.select-none.cursor-pointer.transition(
       :style="{ opacity: showVideo ? 1 : 0.5 }"
       @pointerdown="showVideo = !showVideo; showVideo && video?.requestPictureInPicture?.()")
       .i-la-external-link-square-alt
-    button.text-xl.select-none.cursor-pointer.flex.items-center.gap-1(
+    button.p-4.text-xl.select-none.cursor-pointer.flex.items-center.gap-1(
       :class="{ 'text-red': recording }"
       @pointerdown="recording ? stopRecording() : startRecording()")
       .i-la-circle(v-if="!recording")
       .i-la-dot-circle(v-else)
       .p-0.text-sm.font-mono(v-if="recording && recordedWidth") {{ ((time - recording) / 1000).toFixed(0) }}s ({{ recordedWidth }}px)
-    button.text-xl.select-none.cursor-pointer.flex.items-center.gap-1(
+    button.p-4.text-xl.select-none.cursor-pointer.flex.items-center.gap-1(
       :class="{ 'text-red': videoRecording }"
       @pointerdown="!videoRecording ? startVideo() : stopVideo()")
       .i-la-video
       .p-0.text-sm.font-mono(v-if="videoRecording") {{ ((time - videoRecording) / 1000).toFixed() }}s
 
 
-  .absolute.my-auto.left-2.flex.flex-col.text-white.items-center.overscroll-none.overflow-x-hidden.overflow-y-scroll.bg-dark-900.bg-op-20.backdrop-blur.op-40.hover-op-100.transition.max-h-100vh.overflow-y-scroll.scrollbar-thin.rounded-xl.p-2(v-show="initiated" style="scrollbar-width: none;") 
+  .absolute.my-auto.left-2.flex.flex-col.text-white.items-center.overscroll-none.overflow-x-hidden.overflow-y-scroll.bg-dark-900.bg-op-20.backdrop-blur.op-40.hover-op-100.transition.max-h-100vh.overflow-y-scroll.scrollbar-thin.rounded-xl.p-2.z-50(v-show="initiated" style="scrollbar-width: none;") 
     .is-group.flex.flex-col.gap-2
       ControlRotary(v-model="speed" :min="1" :max="5" :step="1" :fixed="0" param="SPEED")
       ControlRotary(v-model="frame" :min="1" :max="4" :step="1" :fixed="0" param="FRAME")
@@ -270,8 +265,15 @@ onKeyStroke('Enter', (e) => { e.preventDefault(); clear(); })
       ControlRotary(v-model="midpoint" :min="0" :max="1" :step=".0001" param="MIDPOINT" :fixed="2")
       ControlRotary(v-model="smoothing" :min="0" :max="1" :step=".0001" param="SMOOTH" :fixed="2")
 
+  .absolute.bottom-20.border-1.border-light-200.border-op-50.p-2.text-white.flex.gap-2.max-w-80vw.overflow-x-scroll.rounded-xl.z-20(v-if="pics.length")
+    .p-0.relative.min-w-30.bg-black.flex.justify-center.border-1.border-light-200.border-op-50.rounded-lg.overflow-hidden(v-for="(pic, p) in pics" :key="pic") 
+      img.max-h-50( :src="pic")
+      button.p-2.absolute.top-2.left-2(@click="download(pic)")
+        .i-la-download
+      button.p-2.absolute.top-2.right-2(@click="pics.splice(p, 1)") 
+        .i-la-trash
 
-  .fixed.overflow-clip.text-white.transition.bottom-22.rounded-xl.overflow-hidden.rounded-xl.border-1(v-show="showVideo")
+  .absolute.overflow-clip.text-white.transition.bottom-22.rounded-xl.overflow-hidden.rounded-xl.border-1(v-show="showVideo")
     .relative.mx-auto
       .absolute.p-4.opacity-70.touch-none.select-none.text-md.mr-10 Right click here to enter Picture-In-Picture mode
       video.max-h-80.max-w-full(ref="video")
@@ -280,10 +282,6 @@ onKeyStroke('Enter', (e) => { e.preventDefault(); clear(); })
 </template>
 
 <style lang="postcss" scoped>
-button {
-  @apply p-4;
-}
-
 #screen {
   @apply bg-black;
   width: 100%;
