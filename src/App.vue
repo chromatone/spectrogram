@@ -80,7 +80,6 @@ function initiate() {
 let recorder
 
 const startVideo = () => {
-  console.log('hello')
   videoRecording.value = Date.now()
 
   recorder = new MediaRecorder(video.value.srcObject)
@@ -88,25 +87,25 @@ const startVideo = () => {
   recorder.ondataavailable = (event) => {
     const blob = event.data;
     const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
 
-    // Create a new window to display the video
-    const newWindow = window.open('', '_blank', `width=${width.value},height=${height.value + 1}`);
-    newWindow.document.write(`
-      <html style="overscroll-behavior: none;"><body style="margin:0; background: black;  position: relative">
-        <button onclick="saveVideo()" style="position: absolute; top: 1em; left: 1em; font-size: 3em;">Download video</button>
-        <video controls autoplay >
-            <source src="${url}" type="video/mp4">
-        </video>
-      </body></html>
-    `);
+    // const newWindow = window.open('', '_blank', `width=${width.value},height=${height.value + 1}`);
+    // newWindow.document.write(`
+    //   <html style="overscroll-behavior: none;"><body style="margin:0; background: black;  position: relative">
+    //     <button onclick="saveVideo()" style="position: absolute; top: 1em; left: 1em; font-size: 3em;">Download video</button>
+    //     <video controls autoplay >
+    //         <source src="${url}" type="video/mp4">
+    //     </video>
+    //   </body></html>
+    // `);
 
-    newWindow.saveVideo = () => {
-      const a = newWindow.document.createElement('a');
-      a.href = url;
-      a.download = 'recorded_video.mp4';
-      a.click();
-      URL.revokeObjectURL(url);
-    };
+    // newWindow.saveVideo = () => {
+    //   const a = newWindow.document.createElement('a');
+    //   a.href = url;
+    //   a.download = 'recorded_video.mp4';
+    //   a.click();
+    //   URL.revokeObjectURL(url);
+    // };
   };
   recorder.start()
 }
@@ -129,20 +128,20 @@ const stopRecording = () => {
   const filename = `spectrogram_${new Date().toISOString().slice(0, 19).replace(/T/, '_')}.png`;
   offscreenCanvas.toBlob((blob) => {
     const blobUrl = window.URL.createObjectURL(blob);
-    // window.open(blobUrl, '_blank');
-    const newWindow = window.open(undefined, '_blank');
-    if (newWindow) {
-      newWindow.document.write(`
-        <html>
-          <head>
-            <title>${filename}</title>
-          </head>
-          <body style="margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #222222;">
-            <img src="${blobUrl}" alt="${filename}" style="cursor: pointer; max-width: 100%; max-height: 100vh; object-fit: contain;" onclick="const a = document.createElement('a'); a.href = '${blobUrl}'; a.download = '${filename}'; document.body.appendChild(a); a.click();">
-          </body>
-        </html>
-      `);
-    }
+    window.open(blobUrl, '_blank');
+    // const newWindow = window.open(undefined, '_blank');
+    // if (newWindow) {
+    //   newWindow.document.write(`
+    //     <html>
+    //       <head>
+    //         <title>${filename}</title>
+    //       </head>
+    //       <body style="margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #222222;">
+    //         <img src="${blobUrl}" alt="${filename}" style="cursor: pointer; max-width: 100%; max-height: 100vh; object-fit: contain;" onclick="const a = document.createElement('a'); a.href = '${blobUrl}'; a.download = '${filename}'; document.body.appendChild(a); a.click();">
+    //       </body>
+    //     </html>
+    //   `);
+    // }
   }, 'image/png');
 };
 
@@ -255,7 +254,7 @@ onKeyStroke('Enter', (e) => { e.preventDefault(); clear(); })
       @pointerdown="recording ? stopRecording() : startRecording()")
       .i-la-circle(v-if="!recording")
       .i-la-dot-circle(v-else)
-      .p-0.text-sm.font-mono(v-if="recording && recordedWidth") {{ recordedWidth }}px ({{ ((time - recording) / 1000).toFixed(1) }}s)
+      .p-0.text-sm.font-mono(v-if="recording && recordedWidth") {{ ((time - recording) / 1000).toFixed(0) }}s ({{ recordedWidth }}px)
     button.text-xl.select-none.cursor-pointer.flex.items-center.gap-1(
       :class="{ 'text-red': videoRecording }"
       @pointerdown="!videoRecording ? startVideo() : stopVideo()")
