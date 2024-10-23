@@ -2,7 +2,7 @@
 	"name": "chromatone-spectrogram",
 	"description": "Time-frequency sound analysis in color",
 	"private": true,
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"homepage": "https://spectrogram.chromatone.center",
 	"repository": {
 		"type": "git",
