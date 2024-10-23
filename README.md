@@ -14,4 +14,4 @@ Single file HTML web-app that can be installed as a PWA and used completely offl
 - Vite
 - UnoCSS
 
-We use [audioMotion-analyzer](https://github.com/hvianna/audioMotion-analyzer) for the actual audio analysis and pure HTML canvas to draw the spectrogram.
+We use [audioMotion-analyzer](https://github.com/hvianna/audioMotion-analyzer) by Henrique Avila Vianna for the actual audio analysis and pure HTML canvas to draw the spectrogram.
