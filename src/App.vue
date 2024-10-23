@@ -87,7 +87,7 @@ const startVideo = () => {
   recorder.ondataavailable = (event) => {
     const blob = event.data;
     const url = URL.createObjectURL(blob);
-    window.open(url, '_blank');
+    window.open(url);
 
     // const newWindow = window.open('', '_blank', `width=${width.value},height=${height.value + 1}`);
     // newWindow.document.write(`
@@ -128,7 +128,7 @@ const stopRecording = () => {
   const filename = `spectrogram_${new Date().toISOString().slice(0, 19).replace(/T/, '_')}.png`;
   offscreenCanvas.toBlob((blob) => {
     const blobUrl = window.URL.createObjectURL(blob);
-    window.open(blobUrl, '_blank');
+    window.open(blobUrl);
     // const newWindow = window.open(undefined, '_blank');
     // if (newWindow) {
     //   newWindow.document.write(`
