@@ -5,42 +5,39 @@ import { useClamp } from '@vueuse/math';
 import { AudioMotionAnalyzer } from 'audiomotion-analyzer'
 import ControlRotary from './ControlRotary.vue';
 
-let ctx, tempCanvas, tempCtx, audio
+let canvas, ctx, tempCanvas, tempCtx, audio
 
 const screen = ref()
-const canvasElement = ref()
 const video = ref()
 
-const { width, height } = useWindowSize()
-const { toggle } = useFullscreen(screen)
+const { toggle, isSupported } = useFullscreen(screen)
 
 const paused = ref(false)
 const recording = ref(false)
+const videoRecording = ref(false)
 const recordedWidth = ref(0)
 const showVideo = ref(false)
 const initiated = ref(false)
 const vertical = useStorage('vertical', false)
-const invert = useStorage('vertical', false)
+const invert = useStorage('inverted', false)
 
-watch([width, height], ([w, h]) => {
-  if (!canvasElement.value && !tempCanvas) return
-  canvasElement.value.width = tempCanvas.width = w
-  canvasElement.value.height = tempCanvas.height = h
+
+const { width, height } = useWindowSize()
+const setSize = (w, h) => {
+  canvas.width = tempCanvas.width = w
+  canvas.height = tempCanvas.height = h
   clear()
-})
+}
+watch([width, height], ([w, h]) => setSize(w, h))
 
 onMounted(() => {
-  ctx = canvasElement.value.getContext('2d')
+  canvas = document.createElement('canvas')
+  ctx = canvas.getContext('2d')
   tempCanvas = document.createElement('canvas')
   tempCtx = tempCanvas.getContext('2d')
-  tempCanvas.width = width.value
-  tempCanvas.height = height.value
-  clear()
-  const videostream = canvasElement.value.captureStream();
+  setSize(width.value, height.value)
+  const videostream = canvas.captureStream();
   video.value.srcObject = videostream;
-  video.value.play()
-    .then(() => video.value?.requestPictureInPicture?.())
-    .catch(error => console.error(error));
 });
 
 const smoothing = useClamp(useStorage('smoothing', 0.5), 0, 0.9)
@@ -75,10 +72,48 @@ function initiate() {
     const micStream = audio.audioCtx.createMediaStreamSource(stream)
     audio.connectInput(micStream)
     initiated.value = true
+    video.value.play()
   }).catch((e) => {
     console.log('mic denied', e)
   })
 }
+
+let recorder
+
+const startVideo = () => {
+  console.log('hello')
+  videoRecording.value = Date.now()
+
+  recorder = new MediaRecorder(video.value.srcObject)
+
+  recorder.ondataavailable = (event) => {
+    const blob = event.data;
+    const url = URL.createObjectURL(blob);
+
+    // Create a new window to display the video
+    const newWindow = window.open('', '_blank', `width=${width.value},height=${height.value + 1}`);
+    newWindow.document.write(`
+      <html style="overscroll-behavior: none;"><body style="margin:0; background: black;  position: relative">
+        <button onclick="saveVideo()" style="position: absolute; top: 1em; left: 1em; font-size: 3em;">Download video</button>
+        <video controls autoplay >
+            <source src="${url}" type="video/mp4">
+        </video>
+      </body></html>
+    `);
+
+    // Function to handle the "Save Video" button click
+    newWindow.saveVideo = () => {
+      const a = newWindow.document.createElement('a');
+      a.href = url;
+      a.download = 'recorded_video.mp4';
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+  };
+  recorder.start()
+}
+
+const stopVideo = () => { videoRecording.value = false; recorder?.stop() }
 
 let offscreenCanvas, offscreenCtx
 
@@ -94,15 +129,23 @@ const startRecording = () => {
 
 const stopRecording = () => {
   recording.value = false;
-
-  // const link = document.createElement('a');
-  // link.download = 'canvas_recording.png';
-  // link.href = offscreenCanvas.toDataURL();
-  // link.click();
-
+  const filename = `spectrogram_${new Date().toISOString().slice(0, 19).replace(/T/, '_')}.png`;
   offscreenCanvas.toBlob((blob) => {
     const blobUrl = window.URL.createObjectURL(blob);
-    window.open(blobUrl, '_blank');
+    // window.open(blobUrl, '_blank');
+    const newWindow = window.open(undefined, '_blank');
+    if (newWindow) {
+      newWindow.document.write(`
+        <html>
+          <head>
+            <title>${filename}</title>
+          </head>
+          <body style="margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #222222;">
+            <img src="${blobUrl}" alt="${filename}" style="cursor: pointer; max-width: 100%; max-height: 100vh; object-fit: contain;" onclick="const a = document.createElement('a'); a.href = '${blobUrl}'; a.download = '${filename}'; document.body.appendChild(a); a.click();">
+          </body>
+        </html>
+      `);
+    }
   }, 'image/png');
 };
 
@@ -124,7 +167,7 @@ const recordFrame = () => {
   offscreenCtx.drawImage(recTemp, 0, 0)
 
   offscreenCtx.drawImage(
-    canvasElement.value,               // Source canvas
+    canvas,               // Source canvas
     width.value - speed.value, 0,      // Source area (rightmost line)
     speed.value, height.value,         // Size of the copied area
     recordedWidth.value, 0,                  // Destination (append at the right)
@@ -141,7 +184,7 @@ const sigmoid = (value) => 1 / (1 + Math.exp(-steepness.value * (value - midpoin
 const onCanvasDraw = (instance) => {
   if (paused.value) return;
 
-  tempCtx.drawImage(canvasElement.value, 0, 0, width.value, height.value, 0, 0, width.value, height.value);
+  tempCtx.drawImage(canvas, 0, 0, width.value, height.value, 0, 0, width.value, height.value);
 
   const bars = instance.getBars().map(bar => colorFreq(bar.freq, sigmoid(bar.value[0])));
 
@@ -180,11 +223,7 @@ onKeyStroke('Enter', (e) => { e.preventDefault(); clear(); })
 <template lang="pug">
 .flex.flex-col.justify-center.bg-black.relative
   .fullscreen-container#screen(ref="screen")
-    canvas#spectrogram.max-w-full(
-      ref="canvasElement"
-      :width="width"
-      :height="height"
-      )
+    video.max-w-full(ref="video" @click="paused = !paused")
     button.absolute.m-auto.top-0.w-full.h-full.text-white.text-2xl(
       title="Press anywhere to start"
       v-if="!initiated" 
@@ -199,12 +238,23 @@ onKeyStroke('Enter', (e) => { e.preventDefault(); clear(); })
       .i-la-arrow-down(v-else)
     button.text-xl.select-none.cursor-pointer(@pointerdown="clear()")
       .i-la-trash-alt
+    button.text-xl.select-none.cursor-pointer(@pointerdown="toggle()")
+      .i-la-expand
+    button.text-xl.select-none.cursor-pointer.transition(
+      v-if="video?.requestPictureInPicture"
+      @pointerdown="video?.requestPictureInPicture?.()")
+      .i-la-external-link-square-alt
     button.text-xl.select-none.cursor-pointer.flex.items-center.gap-1(
       :class="{ 'text-red': recording }"
       @pointerdown="recording ? stopRecording() : startRecording()")
       .i-la-circle(v-if="!recording")
       .i-la-dot-circle(v-else)
       .p-0.text-sm.font-mono(v-if="recording && recordedWidth") {{ recordedWidth }}px ({{ ((time - recording) / 1000).toFixed(1) }}s)
+    button.text-xl.select-none.cursor-pointer.flex.items-center.gap-1(
+      :class="{ 'text-red': videoRecording }"
+      @pointerdown="!videoRecording ? startVideo() : stopVideo()")
+      .i-la-video
+      .p-0.text-sm.font-mono(v-if="videoRecording") {{ ((time - videoRecording) / 1000).toFixed() }}s
 
 
   .absolute.top-14.left-2.flex.flex-col.text-white.items-center.overscroll-none.overflow-x-hidden.overflow-y-scroll.bg-dark-900.bg-op-20.backdrop-blur.op-40.hover-op-100.transition(v-show="initiated") 
@@ -214,18 +264,7 @@ onKeyStroke('Enter', (e) => { e.preventDefault(); clear(); })
       ControlRotary(v-model="steepness" :min="3" :max="30" :step="0.0001" :fixed="2" param="CONTRAST")
       ControlRotary(v-model="midpoint" :min="0" :max="1" :step=".0001" param="MIDPOINT" :fixed="2")
       ControlRotary(v-model="smoothing" :min="0" :max="1" :step=".0001" param="SMOOTH" :fixed="2")
-    .flex-1
 
-    button.top-4.right-4.text-xl.select-none.cursor-pointer.transition(
-      :style="{ opacity: showVideo ? 1 : 0.2 }"
-        @pointerdown="showVideo = !showVideo")
-        .i-la-external-link-square-alt
-    button.text-xl.select-none.cursor-pointer(@pointerdown="toggle()")
-      .i-la-expand
-  .fixed.overflow-clip.text-white.transition.bottom-4.left-18.rounded-xl.overflow-hidden(v-show="showVideo")
-    .relative
-      .absolute.p-2.opacity-70.touch-none.select-none.text-md Right click here to enter Picture-In-Picture mode
-      video.max-h-50.max-w-full(ref="video")
     
 </template>
 
