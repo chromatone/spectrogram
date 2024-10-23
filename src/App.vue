@@ -8,6 +8,7 @@ import ControlRotary from './ControlRotary.vue';
 let canvas, ctx, tempCanvas, tempCtx, audio
 
 const screen = ref()
+const canvasElement = ref()
 const video = ref()
 
 const { toggle, isSupported } = useFullscreen(screen)
@@ -19,8 +20,6 @@ const recordedWidth = ref(0)
 const showVideo = ref(false)
 const initiated = ref(false)
 const vertical = useStorage('vertical', false)
-const invert = useStorage('inverted', false)
-
 
 const { width, height } = useWindowSize()
 const setSize = (w, h) => {
@@ -31,7 +30,7 @@ const setSize = (w, h) => {
 watch([width, height], ([w, h]) => setSize(w, h))
 
 onMounted(() => {
-  canvas = document.createElement('canvas')
+  canvas = canvasElement.value
   ctx = canvas.getContext('2d')
   tempCanvas = document.createElement('canvas')
   tempCtx = tempCanvas.getContext('2d')
@@ -101,7 +100,6 @@ const startVideo = () => {
       </body></html>
     `);
 
-    // Function to handle the "Save Video" button click
     newWindow.saveVideo = () => {
       const a = newWindow.document.createElement('a');
       a.href = url;
@@ -124,7 +122,6 @@ const startRecording = () => {
   offscreenCtx = offscreenCanvas.getContext('2d');
   recording.value = Date.now();
   recordedWidth.value = speed.value;
-  clear()
 };
 
 const stopRecording = () => {
@@ -167,11 +164,11 @@ const recordFrame = () => {
   offscreenCtx.drawImage(recTemp, 0, 0)
 
   offscreenCtx.drawImage(
-    canvas,               // Source canvas
-    width.value - speed.value, 0,      // Source area (rightmost line)
-    speed.value, height.value,         // Size of the copied area
-    recordedWidth.value, 0,                  // Destination (append at the right)
-    speed.value, height.value          // Size of the destination area
+    canvas,
+    width.value - speed.value, 0,
+    speed.value, height.value,
+    recordedWidth.value, 0,
+    speed.value, height.value
   )
 
   recordedWidth.value = newWidth
@@ -221,15 +218,20 @@ onKeyStroke('Enter', (e) => { e.preventDefault(); clear(); })
 </script>
 
 <template lang="pug">
-.flex.flex-col.justify-center.bg-black.relative
+.flex.flex-col.justify-center.bg-black.relative.w-full.items-center
   .fullscreen-container#screen(ref="screen")
-    video.max-w-full(ref="video" @click="paused = !paused")
+    canvas#spectrogram.max-w-full(
+      @pointerdown="paused = !paused"
+      ref="canvasElement"
+      :width="width"
+      :height="height"
+      )
     button.absolute.m-auto.top-0.w-full.h-full.text-white.text-2xl(
       title="Press anywhere to start"
       v-if="!initiated" 
       @click="initiate()") START
 
-  .flex.absolute.top-2.left-20.top-4.z-100.text-white.op-20.hover-op-100.transition(v-if="initiated")
+  .flex.absolute.top-4.z-100.text-white.op-20.hover-op-100.transition(v-if="initiated")
     button.text-xl.select-none.cursor-pointer(@pointerdown="paused = !paused")
       .i-la-play(v-if="paused")
       .i-la-pause(v-else)
@@ -238,11 +240,15 @@ onKeyStroke('Enter', (e) => { e.preventDefault(); clear(); })
       .i-la-arrow-down(v-else)
     button.text-xl.select-none.cursor-pointer(@pointerdown="clear()")
       .i-la-trash-alt
-    button.text-xl.select-none.cursor-pointer(@pointerdown="toggle()")
+    button.text-xl.select-none.cursor-pointer(
+      v-if="isSupported"
+      @pointerdown="toggle()")
       .i-la-expand
+
+  .flex.absolute.bottom-2.mx-auto.z-100.text-white.op-20.hover-op-100.transition(v-if="initiated")
     button.text-xl.select-none.cursor-pointer.transition(
-      v-if="video?.requestPictureInPicture"
-      @pointerdown="video?.requestPictureInPicture?.()")
+      :style="{ opacity: showVideo ? 1 : 0.5 }"
+      @pointerdown="showVideo = !showVideo; showVideo && video?.requestPictureInPicture?.()")
       .i-la-external-link-square-alt
     button.text-xl.select-none.cursor-pointer.flex.items-center.gap-1(
       :class="{ 'text-red': recording }"
@@ -257,7 +263,7 @@ onKeyStroke('Enter', (e) => { e.preventDefault(); clear(); })
       .p-0.text-sm.font-mono(v-if="videoRecording") {{ ((time - videoRecording) / 1000).toFixed() }}s
 
 
-  .absolute.top-14.left-2.flex.flex-col.text-white.items-center.overscroll-none.overflow-x-hidden.overflow-y-scroll.bg-dark-900.bg-op-20.backdrop-blur.op-40.hover-op-100.transition(v-show="initiated") 
+  .absolute.my-auto.left-2.flex.flex-col.text-white.items-center.overscroll-none.overflow-x-hidden.overflow-y-scroll.bg-dark-900.bg-op-20.backdrop-blur.op-40.hover-op-100.transition.max-h-100vh.overflow-y-scroll.scrollbar-thin.rounded-xl.p-2(v-show="initiated" style="scrollbar-width: none;") 
     .is-group.flex.flex-col.gap-2
       ControlRotary(v-model="speed" :min="1" :max="5" :step="1" :fixed="0" param="SPEED")
       ControlRotary(v-model="frame" :min="1" :max="4" :step="1" :fixed="0" param="FRAME")
@@ -265,7 +271,13 @@ onKeyStroke('Enter', (e) => { e.preventDefault(); clear(); })
       ControlRotary(v-model="midpoint" :min="0" :max="1" :step=".0001" param="MIDPOINT" :fixed="2")
       ControlRotary(v-model="smoothing" :min="0" :max="1" :step=".0001" param="SMOOTH" :fixed="2")
 
-    
+
+  .fixed.overflow-clip.text-white.transition.bottom-22.rounded-xl.overflow-hidden.rounded-xl.border-1(v-show="showVideo")
+    .relative.mx-auto
+      .absolute.p-4.opacity-70.touch-none.select-none.text-md.mr-10 Right click here to enter Picture-In-Picture mode
+      video.max-h-80.max-w-full(ref="video")
+    button.absolute.top-2.right-2(@click="showVideo = false")
+      .i-la-times
 </template>
 
 <style lang="postcss" scoped>
