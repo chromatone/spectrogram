@@ -30,7 +30,6 @@ watch([width, height], ([w, h]) => {
 })
 
 onMounted(() => {
-  initGetUserMedia()
   ctx = canvasElement.value.getContext('2d')
   tempCanvas = document.createElement('canvas')
   tempCtx = tempCanvas.getContext('2d')
@@ -170,33 +169,6 @@ onKeyStroke(' ', (e) => { e.preventDefault(); paused.value = !paused.value })
 
 onKeyStroke('Enter', (e) => { e.preventDefault(); clear(); })
 
-
-function initGetUserMedia() {
-  if (typeof window === 'undefined') return;
-
-  window.AudioContext = window.AudioContext || window.webkitAudioContext;
-  if (!window.AudioContext) {
-    throw new Error("AudioContext not supported");
-  }
-
-  if (navigator.mediaDevices === undefined) {
-    navigator.mediaDevices = {};
-  }
-
-  if (navigator.mediaDevices.getUserMedia === undefined) {
-    navigator.mediaDevices.getUserMedia = function (constraints) {
-      const getUserMedia = navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
-
-      if (!getUserMedia) {
-        throw new Error("getUserMedia is not implemented in this browser");
-      }
-
-      return new Promise((resolve, reject) => {
-        getUserMedia.call(navigator, constraints, resolve, reject);
-      });
-    };
-  }
-}
 </script>
 
 <template lang="pug">
