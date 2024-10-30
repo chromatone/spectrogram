@@ -3,6 +3,7 @@
 	"description": "Time-frequency sound analysis in color",
 	"private": true,
 	"version": "0.2.0",
+	"year": 2024,
 	"homepage": "https://spectrogram.chromatone.center",
 	"repository": {
 		"type": "git",
@@ -23,7 +24,7 @@
 	"engines": {
 		"node": "^20.x"
 	},
-	"packageManager": "pnpm@9.12.2",
+	"packageManager": "pnpm@9.12.3",
 	"scripts": {
 		"dev": "vite --host",
 		"build": "vite build",
@@ -40,7 +41,7 @@
 	"devDependencies": {
 		"@unocss/extractor-pug": "^0.63.6",
 		"@vitejs/plugin-vue": "^5.1.4",
-		"@vue/language-plugin-pug": "^2.1.6",
+		"@vue/language-plugin-pug": "^2.1.8",
 		"pug": "^3.0.3",
 		"unocss": "^0.63.6",
 		"vite": "^5.4.10",

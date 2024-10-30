@@ -1,218 +1,54 @@
 <script setup>
 import { ref, onMounted, watch, reactive } from 'vue'
 import { onKeyStroke, useFullscreen, useStorage, useTimestamp, useWindowSize } from '@vueuse/core'
-import { useClamp } from '@vueuse/math';
-import { AudioMotionAnalyzer } from 'audiomotion-analyzer'
-import ControlRotary from './ControlRotary.vue';
 
-let canvas, ctx, tempCanvas, tempCtx, audio
+import ControlRotary from './ControlRotary.vue'
 
-const screen = ref()
-const canvasElement = ref()
-const video = ref()
+import {version, year} from '../package.json'
+import { useSpectrogram } from './useSpectrogram';
+
+const {
+    initiate, startRecording, stopRecording, pics, startVideo, stopVideo, clear, download, time, screen, canvasElement, video, paused, recording, videoRecording, recordedWidth, smoothing, speed, midpoint, initiated, vertical, width, height, frame, steepness
+  } = useSpectrogram()
 
 const { toggle, isSupported } = useFullscreen(screen)
 
-const paused = ref(false)
-const recording = ref(false)
-const videoRecording = ref(false)
-const recordedWidth = ref(0)
 const showVideo = ref(false)
-const initiated = ref(false)
-const vertical = useStorage('vertical', false)
-
-const { width, height } = useWindowSize()
-const setSize = (w, h) => {
-  canvas.width = tempCanvas.width = w
-  canvas.height = tempCanvas.height = h
-  clear()
-}
-watch([width, height], ([w, h]) => setSize(w, h))
-
-onMounted(() => {
-  canvas = canvasElement.value
-  ctx = canvas.getContext('2d')
-  tempCanvas = document.createElement('canvas')
-  tempCtx = tempCanvas.getContext('2d')
-  setSize(width.value, height.value)
-  const videostream = canvas.captureStream();
-  video.value.srcObject = videostream;
-});
-
-const smoothing = useClamp(useStorage('smoothing', 0.5), 0, 0.9)
-const frame = useClamp(useStorage('frame', 2), 1, 4)
-const speed = useClamp(useStorage('speed', 1), 1, 4)
-const steepness = useClamp(useStorage('steepness', 10), 3, 30)
-const midpoint = useClamp(useStorage('midpoint', 0.5), 0, 1)
 
 
-watch(frame, f => audio && (audio.fftSize = Math.pow(2, 11 + f)))
-watch(smoothing, s => audio && (audio.smoothing = s))
 
-function initiate() {
-  navigator.mediaDevices.getUserMedia({
-    audio: {
-      echoCancellation: false,
-      autoGainControl: true,
-      noiseSuppression: false,
-    }, video: false
-  }).then(async stream => {
-
-    audio = new AudioMotionAnalyzer(null, {
-      mode: 1,
-      connectSpeakers: false,
-      volume: 0,
-      fftSize: 8192,
-      smoothing: smoothing.value,
-      useCanvas: false,
-      onCanvasDraw,
-    })
-
-    const micStream = audio.audioCtx.createMediaStreamSource(stream)
-    audio.connectInput(micStream)
-    initiated.value = true
-    video.value.play()
-  }).catch((e) => {
-    console.log('mic denied', e)
-  })
-}
-
-let recorder
-
-const startVideo = () => {
-  videoRecording.value = Date.now()
-
-  recorder = new MediaRecorder(video.value.srcObject)
-
-  recorder.ondataavailable = (event) => {
-    const blob = event.data;
-    const url = URL.createObjectURL(blob);
-    window.open(url, '_blank');
-
-    // const newWindow = window.open('', '_blank', `width=${width.value},height=${height.value + 1}`);
-    // newWindow.document.write(`
-    //   <html style="overscroll-behavior: none;"><body style="margin:0; background: black;  position: relative">
-    //     <button onclick="saveVideo()" style="position: absolute; top: 1em; left: 1em; font-size: 3em;">Download video</button>
-    //     <video controls autoplay >
-    //         <source src="${url}" type="video/mp4">
-    //     </video>
-    //   </body></html>
-    // `);
-
-    // newWindow.saveVideo = () => {
-    //   const a = newWindow.document.createElement('a');
-    //   a.href = url;
-    //   a.download = 'recorded_video.mp4';
-    //   a.click();
-    //   URL.revokeObjectURL(url);
-    // };
-  };
-  recorder.start()
-}
-
-const stopVideo = () => { videoRecording.value = false; recorder?.stop() }
-
-const pics = reactive([])
-
-let offscreenCanvas, offscreenCtx
-
-const startRecording = () => {
-  offscreenCanvas = document.createElement('canvas');
-  offscreenCanvas.width = speed.value;
-  offscreenCanvas.height = height.value;
-  offscreenCtx = offscreenCanvas.getContext('2d');
-  recording.value = Date.now();
-  recordedWidth.value = speed.value;
-};
-
-const stopRecording = () => {
-  recording.value = false;
-  offscreenCanvas.toBlob((blob) => {
-    pics.push(window.URL.createObjectURL(blob))
-  }, 'image/png');
-};
-
-let recTemp, recCtx
-
-const time = useTimestamp()
-
-const recordFrame = () => {
-
-  recTemp = recTemp || document.createElement('canvas')
-  recCtx = recCtx || recTemp.getContext('2d')
-
-  const newWidth = recordedWidth.value + speed.value
-
-  recTemp.width = newWidth
-  recTemp.height = offscreenCanvas.height
-  recCtx.drawImage(offscreenCanvas, 0, 0)
-  offscreenCanvas.width = newWidth
-  offscreenCtx.drawImage(recTemp, 0, 0)
-
-  offscreenCtx.drawImage(
-    canvas,
-    width.value - speed.value, 0,
-    speed.value, height.value,
-    recordedWidth.value, 0,
-    speed.value, height.value
-  )
-
-  recordedWidth.value = newWidth
-};
-
-const freqPitch = (freq) => 12 * Math.log2(Number(freq) / 440);
-const colorFreq = (freq, value) => `hsl(${freqPitch(freq) * 30}, ${value * 100}%, ${value * 75}%)`;
-const sigmoid = (value) => 1 / (1 + Math.exp(-steepness.value * (value - midpoint.value)));
-
-const onCanvasDraw = (instance) => {
-  if (paused.value) return;
-
-  tempCtx.drawImage(canvas, 0, 0, width.value, height.value, 0, 0, width.value, height.value);
-
-  const bars = instance.getBars().map(bar => colorFreq(bar.freq, sigmoid(bar.value[0])));
-
-  const barWidth = width.value / bars.length;
-  const barHeight = height.value / bars.length;
-
-  bars.forEach((barColor, i) => {
-    const [x, y, w, h] = vertical.value
-      ? [i * barWidth, 0, barWidth, speed.value]
-      : [width.value - speed.value, height.value - (i + 1) * barHeight, speed.value, barHeight];
-    ctx.fillStyle = barColor;
-    ctx.fillRect(x, y, w, h);
-  });
-
-  ctx.translate(vertical.value ? 0 : -speed.value, vertical.value ? speed.value : 0);
-  ctx.drawImage(tempCanvas, 0, 0, width.value, height.value, 0, 0, width.value, height.value);
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-
-  if (recording.value) {
-    recordFrame()
-  }
-};
-
-
-function clear() {
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, width.value, height.value)
-}
-
-onKeyStroke(' ', (e) => { e.preventDefault(); paused.value = !paused.value })
-
-onKeyStroke('Enter', (e) => { e.preventDefault(); clear(); })
-
-function download(url) {
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `spectrogram_${new Date().toISOString().slice(0, 19).replace(/T/, '_')}.png`
-  document.body.appendChild(a);
-  a.click();
-}
 
 </script>
 
 <template lang="pug">
 .flex.flex-col.justify-center.bg-black.relative.w-full.items-center
+  .text-center.absolute.m-auto.top-0.w-full.h-full.text-white.flex.flex-col.items-center.justify-center.gap-4.p-4.bg-stone-800(v-if="!initiated") 
+    a.m-4.flex.flex-col.items-center.gap-1(href="https://chromatone.center" target="_blank")
+      img(src="/logo.svg" width="80px" height="80px")
+      .font-bold.text-2xl Chromatone 
+    .flex-1
+    
+    .flex.flex-col.items-center.gap-2
+      h1.text-5xl Spectrogram
+      h2.text-xl Visual audio feedback instrument
+    form(@submit.prevent="initiate()")
+      button.m-2.text-2xl.border-1.p-4.rounded-xl(
+        title="Press here to start" 
+        autofocus
+        aria-label=""
+        type="submit") START
+    .flex-1
+    .max-w-40ch.flex.flex-col.gap-1
+      h3.text-lg Portable time-frequency analysis tool
+      p.text-sm 240 bands of distinct frequencies being extracted with FFT from audio input signal and displayed with colors matching pitch class.
+      p.op-80.text-xs A is red, A# is orange, B is yellow, C is lime, C# is green, D is mint, D# is cyan, E is azure, F is blue, F# is violet, G is magenta and G# is rose. 
+
+    .flex.items-center.gap-2
+      a.flex.gap-2.p-2.m-2.border-1.rounded-lg(href="https://github.com/chromatone/spectrogram" target="_blank")
+        .i-la-github
+        .p-0 Open Source
+      p v.{{version}} MIT {{ year }}
+ 
   .fullscreen-container#screen(ref="screen")
     canvas#spectrogram.max-w-full(
       @pointerdown="paused = !paused"
@@ -220,11 +56,6 @@ function download(url) {
       :width="width"
       :height="height"
       )
-    button.absolute.m-auto.top-0.w-full.h-full.text-white.text-2xl(
-      title="Press anywhere to start"
-      v-if="!initiated" 
-      @click="initiate()") START
-
   .flex.absolute.top-4.z-100.text-white.op-20.hover-op-100.transition(v-if="initiated")
     button.p-4.text-xl.select-none.cursor-pointer(@pointerdown="paused = !paused")
       .i-la-play(v-if="paused")
@@ -259,11 +90,11 @@ function download(url) {
 
   .absolute.my-auto.left-2.flex.flex-col.text-white.items-center.overscroll-none.overflow-x-hidden.overflow-y-scroll.bg-dark-900.bg-op-20.backdrop-blur.op-40.hover-op-100.transition.max-h-100vh.overflow-y-scroll.scrollbar-thin.rounded-xl.p-2.z-50(v-show="initiated" style="scrollbar-width: none;") 
     .is-group.flex.flex-col.gap-2
-      ControlRotary(v-model="speed" :min="1" :max="5" :step="1" :fixed="0" param="SPEED")
-      ControlRotary(v-model="frame" :min="1" :max="4" :step="1" :fixed="0" param="FRAME")
-      ControlRotary(v-model="steepness" :min="3" :max="30" :step="0.0001" :fixed="2" param="CONTRAST")
       ControlRotary(v-model="midpoint" :min="0" :max="1" :step=".0001" param="MIDPOINT" :fixed="2")
+      ControlRotary(v-model="steepness" :min="3" :max="30" :step="0.0001" :fixed="2" param="CONTRAST")
       ControlRotary(v-model="smoothing" :min="0" :max="1" :step=".0001" param="SMOOTH" :fixed="2")
+      ControlRotary(v-model="frame" :min="1" :max="4" :step="1" :fixed="0" param="FRAME")
+      ControlRotary(v-model="speed" :min="1" :max="5" :step="1" :fixed="0" param="SPEED")
 
   .absolute.bottom-20.border-1.border-light-200.border-op-50.p-2.text-white.flex.gap-2.max-w-80vw.overflow-x-scroll.rounded-xl.z-20(v-if="pics.length")
     .p-0.relative.min-w-30.bg-black.flex.justify-center.border-1.border-light-200.border-op-50.rounded-lg.overflow-hidden(v-for="(pic, p) in pics" :key="pic") 
