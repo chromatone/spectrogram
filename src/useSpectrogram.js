@@ -182,7 +182,7 @@ export function useSpectrogram() {
 
   onKeyStroke(' ', (e) => { e.preventDefault(); paused.value = !paused.value })
 
-  onKeyStroke('Enter', (e) => { clear(); })
+  onKeyStroke('Enter', () => clear())
 
   function download(url) {
     const a = document.createElement('a');
@@ -196,25 +196,5 @@ export function useSpectrogram() {
     initiate, startRecording, stopRecording, pics, startVideo, stopVideo, clear, download, time, screen, canvasElement, video, paused, recording, videoRecording, recordedWidth, smoothing, speed, midpoint, initiated, vertical, width, height, frame, steepness
   }
 }
-
-
-
-// const newWindow = window.open('', '_blank', `width=${width.value},height=${height.value + 1}`);
-// newWindow.document.write(`
-//   <html style="overscroll-behavior: none;"><body style="margin:0; background: black;  position: relative">
-//     <button onclick="saveVideo()" style="position: absolute; top: 1em; left: 1em; font-size: 3em;">Download video</button>
-//     <video controls autoplay >
-//         <source src="${url}" type="video/mp4">
-//     </video>
-//   </body></html>
-// `);
-
-// newWindow.saveVideo = () => {
-//   const a = newWindow.document.createElement('a');
-//   a.href = url;
-//   a.download = 'recorded_video.mp4';
-//   a.click();
-//   URL.revokeObjectURL(url);
-// };
 
 
