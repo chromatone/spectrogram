@@ -18,17 +18,23 @@
 			"sizes": "any",
 			"type": "image/svg+xml",
 			"purpose": "any"
+		},
+		{
+			"src": "./logo.png",
+			"sizes": "any",
+			"type": "image/png",
+			"purpose": "any"
 		}
 	],
 	"screenshots": [
 		{
-			"src": "./screenshot-h.png",
+			"src": "./screenshot-w.png",
 			"type": "image/png",
 			"sizes": "1280x720",
 			"form_factor": "wide"
 		},
 		{
-			"src": "./screenshot-v.jpg",
+			"src": "./screenshot-n.jpg",
 			"type": "image/jpg",
 			"sizes": "720x1280",
 			"form_factor": "narrow"

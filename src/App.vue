@@ -1,19 +1,36 @@
 <script setup>
-import { ref, onMounted, watch, reactive } from 'vue'
-import { onKeyStroke, useFullscreen, useStorage, useTimestamp, useWindowSize } from '@vueuse/core'
+import { ref } from 'vue'
+import { onKeyStroke, useFullscreen, useTimestamp } from '@vueuse/core'
 
 import ControlRotary from './ControlRotary.vue'
 
 import { version, year } from '../package.json'
 import { useSpectrogram } from './useSpectrogram';
+import { useVideoRecorder } from './useVideoRecorder';
 
 const {
-  initiate, startRecording, stopRecording, pics, startVideo, stopVideo, clear, download, time, screen, canvasElement, video, paused, recording, videoRecording, recordedWidth, smoothing, speed, midpoint, initiated, vertical, width, height, frame, steepness
+  screen, canvasElement, video, paused, recording, recordedWidth, controls, params, initiated, vertical, width, height, initiate, startRecording, stopRecording, pics, clear
 } = useSpectrogram()
+
+const time = useTimestamp()
 
 const { toggle, isSupported } = useFullscreen(screen)
 
+const { videoRecording, startVideo, stopVideo } = useVideoRecorder(video)
+
 const showVideo = ref(false)
+
+function download(url) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `spectrogram_${new Date().toISOString().slice(0, 19).replace(/T/, '_')}.png`
+  document.body.appendChild(a);
+  a.click();
+}
+
+onKeyStroke(' ', (e) => { e.preventDefault(); paused.value = !paused.value })
+
+onKeyStroke('Enter', () => clear())
 
 </script>
 
@@ -38,13 +55,13 @@ const showVideo = ref(false)
     .flex-1
     .max-w-40ch.flex.flex-col.gap-1
       h3.text-lg Portable time-frequency analysis tool
-      p.text-sm 240 bands of distinct frequencies being extracted with FFT from audio input signal and displayed with colors matching pitch class.
+      p.text-sm 240 bands of distinct frequencies being extracted with FFT from audio input signal and displayed in colors matching pitch class.
       p.op-80.text-xs A is red, A#/Bb is orange, B is yellow, C is lime, C#/Dd is green, D is mint, D#/Eb is cyan, E is azure, F is blue, F#/Gb is violet, G is magenta and G#/Ab is rose. 
 
     .flex.items-center.gap-2
       a.flex.gap-2.p-2.m-2.border-1.rounded-lg(href="https://github.com/chromatone/spectrogram" target="_blank")
         .i-la-github
-        .p-0 Open Source Code
+        .p-0 Open Source
       .flex.gap-1
         .p-0  v.{{ version }} 
         .p-0 by
@@ -67,16 +84,16 @@ const showVideo = ref(false)
       .i-la-arrow-down(v-else)
     button.p-4.text-xl.select-none.cursor-pointer(@pointerdown="clear()")
       .i-la-trash-alt
-    button.p-4.text-xl.select-none.cursor-pointer(
-      v-if="isSupported"
-      @pointerdown="toggle()")
-      .i-la-expand
 
   .flex.absolute.bottom-2.mx-auto.z-100.text-white.op-20.hover-op-100.transition(v-if="initiated")
     button.p-4.text-xl.select-none.cursor-pointer.transition(
       :style="{ opacity: showVideo ? 1 : 0.5 }"
       @pointerdown="showVideo = !showVideo; showVideo && video?.requestPictureInPicture?.()")
       .i-la-external-link-square-alt
+    button.p-4.text-xl.select-none.cursor-pointer(
+      v-if="isSupported"
+      @pointerdown="toggle()")
+      .i-la-expand
     button.p-4.text-xl.select-none.cursor-pointer.flex.items-center.gap-1(
       :class="{ 'text-red': recording }"
       @pointerdown="recording ? stopRecording() : startRecording()")
@@ -92,11 +109,7 @@ const showVideo = ref(false)
 
   .absolute.my-auto.left-2.flex.flex-col.text-white.items-center.overscroll-none.overflow-x-hidden.overflow-y-scroll.bg-dark-900.bg-op-20.backdrop-blur.op-40.hover-op-100.transition.max-h-100vh.overflow-y-scroll.scrollbar-thin.rounded-xl.p-2.z-50(v-show="initiated" style="scrollbar-width: none;") 
     .is-group.flex.flex-col.gap-2
-      ControlRotary(v-model="midpoint" :min="0" :max="1" :step=".0001" param="MIDPOINT" :fixed="2")
-      ControlRotary(v-model="steepness" :min="3" :max="30" :step="0.0001" :fixed="2" param="CONTRAST")
-      ControlRotary(v-model="smoothing" :min="0" :max="1" :step=".0001" param="SMOOTH" :fixed="2")
-      ControlRotary(v-model="frame" :min="1" :max="4" :step="1" :fixed="0" param="FRAME")
-      ControlRotary(v-model="speed" :min="1" :max="5" :step="1" :fixed="0" param="SPEED")
+      ControlRotary(v-for="(param, p) in params" v-model="controls[p]" :min="param.min" :max="param.max" :step="param.step" :param="p" :fixed="param.fixed")
 
   .absolute.bottom-20.border-1.border-light-200.border-op-50.p-2.text-white.flex.gap-2.max-w-80vw.overflow-x-scroll.rounded-xl.z-20(v-if="pics.length")
     .p-0.relative.min-w-30.bg-black.flex.justify-center.border-1.border-light-200.border-op-50.rounded-lg.overflow-hidden(v-for="(pic, p) in pics" :key="pic") 
@@ -114,9 +127,15 @@ const showVideo = ref(false)
       .i-la-times
 </template>
 
-<style lang="postcss" scoped>
+<style lang="postcss">
 #screen {
-  @apply bg-black;
+  width: 100%;
+  height: 100%;
+}
+
+html,
+body {
+  background-color: black;
   width: 100%;
   min-width: 320px;
   min-height: 100vh;
@@ -132,7 +151,7 @@ const showVideo = ref(false)
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  transition: all 600ms ease;
-  overscroll-behavior-y: none;
+  overscroll-behavior: none;
+  overflow: hidden;
 }
 </style>
