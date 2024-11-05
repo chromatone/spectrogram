@@ -21,7 +21,13 @@
 		},
 		{
 			"src": "./logo.png",
-			"sizes": "any",
+			"sizes": "1600x1600",
+			"type": "image/png",
+			"purpose": "any"
+		},
+		{
+			"src": "./icon.png",
+			"sizes": "512x512",
 			"type": "image/png",
 			"purpose": "any"
 		}
