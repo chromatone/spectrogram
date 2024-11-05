@@ -30,44 +30,13 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Spectrogram">
 
-  <link rel="manifest" href='data:application/manifest+json,{
-	"id": "spectrogram-v.0.2.1",
-	"name": "Chromatone Spectrogram",
-	"short_name": "Spectrogram",
-	"description": "Visual time-frequency analysis for all",
-  "background_color": "black",	
-  "theme_color": "black",	
-  "display": "standalone",
-	"orientation": "any",
-	"display_override": ["window-controls-overlay", "standalone"],
-	"handle_links": "preferred",
-	"prefer_related_applications": false,
-	"categories": ["music", "audio", "tools"],
-	"icons": [
-		{
-			"src": "https://spectrogram.chromatone.center/logo.svg",
-			"sizes": "any",
-			"type": "image/svg+xml",
-			"purpose": "any"
-		}
-	],
-	"screenshots": [
-		{
-			"src": "https://spectrogram.chromatone.center/spectrogram.png",
-			"type": "image/png",
-			"sizes": "1280x720",
-			"form_factor": "wide"
-		}
-	],
-	"launch_handler": {
-		"client_mode": ["focus-existing", "auto"]
-	}
-}
-' />
+  <link rel="manifest" href="/manifest.json">
+
+  <!-- Stats production build insert -->
 
 </head>
 
-<body style="background-color:#222">
+<body style="background-color:black">
   <div id="app"></div>
   <script type="module" src="/src/main.js"></script>
 </body>

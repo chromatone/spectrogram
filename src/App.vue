@@ -4,51 +4,53 @@ import { onKeyStroke, useFullscreen, useStorage, useTimestamp, useWindowSize } f
 
 import ControlRotary from './ControlRotary.vue'
 
-import {version, year} from '../package.json'
+import { version, year } from '../package.json'
 import { useSpectrogram } from './useSpectrogram';
 
 const {
-    initiate, startRecording, stopRecording, pics, startVideo, stopVideo, clear, download, time, screen, canvasElement, video, paused, recording, videoRecording, recordedWidth, smoothing, speed, midpoint, initiated, vertical, width, height, frame, steepness
-  } = useSpectrogram()
+  initiate, startRecording, stopRecording, pics, startVideo, stopVideo, clear, download, time, screen, canvasElement, video, paused, recording, videoRecording, recordedWidth, smoothing, speed, midpoint, initiated, vertical, width, height, frame, steepness
+} = useSpectrogram()
 
 const { toggle, isSupported } = useFullscreen(screen)
 
 const showVideo = ref(false)
-
-
-
 
 </script>
 
 <template lang="pug">
 .flex.flex-col.justify-center.bg-black.relative.w-full.items-center
   .text-center.absolute.m-auto.top-0.w-full.h-full.text-white.flex.flex-col.items-center.justify-center.gap-4.p-4.bg-stone-800(v-if="!initiated") 
-    a.m-4.flex.flex-col.items-center.gap-1(href="https://chromatone.center" target="_blank")
-      img(src="/logo.svg" width="80px" height="80px")
-      .font-bold.text-2xl Chromatone 
+
     .flex-1
-    
+
     .flex.flex-col.items-center.gap-2
-      h1.text-5xl Spectrogram
+      a.m-4.flex.flex-col.items-center.gap-1(href="https://chromatone.center" target="_blank")
+        img(src="/logo.svg" width="80px" height="80px")
+        .font-bold.text-3xl.op-70 Chromatone 
+      h1.text-6xl Spectrogram
       h2.text-xl Visual audio feedback instrument
     form(@submit.prevent="initiate()")
       button.m-2.text-2xl.border-1.p-4.rounded-xl(
         title="Press here to start" 
         autofocus
-        aria-label=""
+        aria-label="Start button"
         type="submit") START
     .flex-1
     .max-w-40ch.flex.flex-col.gap-1
       h3.text-lg Portable time-frequency analysis tool
       p.text-sm 240 bands of distinct frequencies being extracted with FFT from audio input signal and displayed with colors matching pitch class.
-      p.op-80.text-xs A is red, A# is orange, B is yellow, C is lime, C# is green, D is mint, D# is cyan, E is azure, F is blue, F# is violet, G is magenta and G# is rose. 
+      p.op-80.text-xs A is red, A#/Bb is orange, B is yellow, C is lime, C#/Dd is green, D is mint, D#/Eb is cyan, E is azure, F is blue, F#/Gb is violet, G is magenta and G#/Ab is rose. 
 
     .flex.items-center.gap-2
       a.flex.gap-2.p-2.m-2.border-1.rounded-lg(href="https://github.com/chromatone/spectrogram" target="_blank")
         .i-la-github
-        .p-0 Open Source
-      p v.{{version}} MIT {{ year }}
- 
+        .p-0 Open Source Code
+      .flex.gap-1
+        .p-0  v.{{ version }} 
+        .p-0 by
+        a.underline(href="https://github.com/davay42" target="_blank") davay42 
+        .p-0.op-50 MIT {{ year }}
+
   .fullscreen-container#screen(ref="screen")
     canvas#spectrogram.max-w-full(
       @pointerdown="paused = !paused"
