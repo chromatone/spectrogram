@@ -11,6 +11,15 @@ const params = {
   speed: { default: 1, min: 1, max: 4, step: 1, fixed: 0 }
 }
 
+function useControls(paramsList) {
+  const controls = reactive({})
+  for (let param in paramsList) {
+    let p = paramsList[param]
+    controls[param] = useClamp(useStorage(param, p.default), p.min, p.max)
+  }
+  return controls
+}
+
 export function useSpectrogram() {
   let canvas, ctx, tempCanvas, tempCtx, audio
 
@@ -25,12 +34,7 @@ export function useSpectrogram() {
 
   const vertical = useStorage('vertical', false)
 
-  const controls = reactive({})
-
-  for (let param in params) {
-    let p = params[param]
-    controls[param] = useClamp(useStorage(param, p.default), p.min, p.max)
-  }
+  const controls = useControls(params)
 
   watch(() => controls.frame, f => audio && (audio.fftSize = Math.pow(2, 11 + f)))
   watch(() => controls.smooth, s => audio && (audio.smooth = s))

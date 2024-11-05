@@ -8,11 +8,11 @@ import { version, year } from '../package.json'
 import { useSpectrogram } from './useSpectrogram';
 import { useVideoRecorder } from './useVideoRecorder';
 
+const time = useTimestamp()
+
 const {
   screen, canvasElement, video, paused, recording, recordedWidth, controls, params, initiated, vertical, width, height, initiate, startRecording, stopRecording, pics, clear
 } = useSpectrogram()
-
-const time = useTimestamp()
 
 const { toggle, isSupported } = useFullscreen(screen)
 
