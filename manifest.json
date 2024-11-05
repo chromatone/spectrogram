@@ -1,0 +1,40 @@
+{
+	"id": "spectrogram-v.0.2.1",
+	"name": "Chromatone Spectrogram",
+	"short_name": "Spectrogram",
+	"description": "Visual time-frequency analysis for all",
+	"start_url": "/",
+	"background_color": "black",
+	"theme_color": "black",
+	"display": "standalone",
+	"orientation": "any",
+	"display_override": ["window-controls-overlay", "minimal-ui", "standalone"],
+	"handle_links": "preferred",
+	"prefer_related_applications": false,
+	"categories": ["music", "audio", "tools"],
+	"icons": [
+		{
+			"src": "./logo.svg",
+			"sizes": "any",
+			"type": "image/svg+xml",
+			"purpose": "any"
+		}
+	],
+	"screenshots": [
+		{
+			"src": "./screenshot-h.png",
+			"type": "image/png",
+			"sizes": "1280x720",
+			"form_factor": "wide"
+		},
+		{
+			"src": "./screenshot-v.jpg",
+			"type": "image/jpg",
+			"sizes": "720x1280",
+			"form_factor": "narrow"
+		}
+	],
+	"launch_handler": {
+		"client_mode": ["focus-existing", "auto"]
+	}
+}
