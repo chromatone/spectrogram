@@ -1,7 +1,15 @@
 import { ref, onMounted, watch, reactive } from 'vue'
-import { onKeyStroke, useStorage, useTimestamp, useWindowSize } from '@vueuse/core'
+import { useStorage, useWindowSize } from '@vueuse/core'
 import { useClamp } from '@vueuse/math';
 import { AudioMotionAnalyzer } from 'audiomotion-analyzer'
+
+const params = {
+  midpoint: { default: 0.5, min: 0, max: 1, step: 0.0001, fixed: 2 },
+  steep: { default: 10, min: 3, max: 30, step: 0.001, fixed: 2 },
+  smooth: { default: 0.5, min: 0, max: 1, step: 0.0001, fixed: 2 },
+  frame: { default: 2, min: 1, max: 4, step: 1, fixed: 0 },
+  speed: { default: 1, min: 1, max: 4, step: 1, fixed: 0 }
+}
 
 export function useSpectrogram() {
   let canvas, ctx, tempCanvas, tempCtx, audio
@@ -10,13 +18,22 @@ export function useSpectrogram() {
   const canvasElement = ref()
   const video = ref()
 
+  const initiated = ref(false)
   const paused = ref(false)
   const recording = ref(false)
-  const videoRecording = ref(false)
   const recordedWidth = ref(0)
 
-  const initiated = ref(false)
   const vertical = useStorage('vertical', false)
+
+  const controls = reactive({})
+
+  for (let param in params) {
+    let p = params[param]
+    controls[param] = useClamp(useStorage(param, p.default), p.min, p.max)
+  }
+
+  watch(() => controls.frame, f => audio && (audio.fftSize = Math.pow(2, 11 + f)))
+  watch(() => controls.smooth, s => audio && (audio.smooth = s))
 
   const { width, height } = useWindowSize()
   const setSize = (w, h) => {
@@ -36,15 +53,6 @@ export function useSpectrogram() {
     video.value.srcObject = videostream;
   });
 
-  const smoothing = useClamp(useStorage('smoothing', 0.5), 0, 0.9)
-  const frame = useClamp(useStorage('frame', 2), 1, 4)
-  const speed = useClamp(useStorage('speed', 1), 1, 4)
-  const steepness = useClamp(useStorage('steepness', 10), 3, 30)
-  const midpoint = useClamp(useStorage('midpoint', 0.5), 0, 1)
-
-  watch(frame, f => audio && (audio.fftSize = Math.pow(2, 11 + f)))
-  watch(smoothing, s => audio && (audio.smoothing = s))
-
   function initiate() {
     navigator.mediaDevices.getUserMedia({
       audio: {
@@ -59,7 +67,7 @@ export function useSpectrogram() {
         connectSpeakers: false,
         volume: 0,
         fftSize: 8192,
-        smoothing: smoothing.value,
+        smoothing: controls.smooth,
         useCanvas: false,
         onCanvasDraw,
       })
@@ -73,39 +81,17 @@ export function useSpectrogram() {
     })
   }
 
-  let recorder
-
-  const startVideo = async () => {
-    videoRecording.value = Date.now()
-    const videoStream = video.value.srcObject
-    const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-
-    const combinedStream = new MediaStream([...videoStream.getTracks(), ...audioStream.getTracks()]);
-
-
-    recorder = new MediaRecorder(combinedStream)
-
-    recorder.ondataavailable = (event) => {
-      const blob = event.data;
-      const url = URL.createObjectURL(blob);
-      window.open(url, '_blank');
-    };
-    recorder.start()
-  }
-
-  const stopVideo = () => { videoRecording.value = false; recorder?.stop() }
-
   const pics = reactive([])
 
   let offscreenCanvas, offscreenCtx
 
   const startRecording = () => {
     offscreenCanvas = document.createElement('canvas');
-    offscreenCanvas.width = speed.value;
+    offscreenCanvas.width = controls.speed;
     offscreenCanvas.height = height.value;
     offscreenCtx = offscreenCanvas.getContext('2d');
     recording.value = Date.now();
-    recordedWidth.value = speed.value;
+    recordedWidth.value = controls.speed;
   };
 
   const stopRecording = () => {
@@ -117,14 +103,12 @@ export function useSpectrogram() {
 
   let recTemp, recCtx
 
-  const time = useTimestamp()
-
   const recordFrame = () => {
 
     recTemp = recTemp || document.createElement('canvas')
     recCtx = recCtx || recTemp.getContext('2d')
 
-    const newWidth = recordedWidth.value + speed.value
+    const newWidth = recordedWidth.value + controls.speed
 
     recTemp.width = newWidth
     recTemp.height = offscreenCanvas.height
@@ -134,10 +118,10 @@ export function useSpectrogram() {
 
     offscreenCtx.drawImage(
       canvas,
-      width.value - speed.value, 0,
-      speed.value, height.value,
+      width.value - controls.speed, 0,
+      controls.speed, height.value,
       recordedWidth.value, 0,
-      speed.value, height.value
+      controls.speed, height.value
     )
 
     recordedWidth.value = newWidth
@@ -145,7 +129,7 @@ export function useSpectrogram() {
 
   const freqPitch = (freq) => 12 * Math.log2(Number(freq) / 440);
   const colorFreq = (freq, value) => `hsl(${freqPitch(freq) * 30}, ${value * 100}%, ${value * 75}%)`;
-  const sigmoid = (value) => 1 / (1 + Math.exp(-steepness.value * (value - midpoint.value)));
+  const sigmoid = (value) => 1 / (1 + Math.exp(-controls.steep * (value - controls.midpoint)));
 
   const onCanvasDraw = (instance) => {
     if (paused.value) return;
@@ -159,13 +143,13 @@ export function useSpectrogram() {
 
     bars.forEach((barColor, i) => {
       const [x, y, w, h] = vertical.value
-        ? [i * barWidth, 0, barWidth, speed.value]
-        : [width.value - speed.value, height.value - (i + 1) * barHeight, speed.value, barHeight];
+        ? [i * barWidth, 0, barWidth, controls.speed]
+        : [width.value - controls.speed, height.value - (i + 1) * barHeight, controls.speed, barHeight];
       ctx.fillStyle = barColor;
       ctx.fillRect(x, y, w, h);
     });
 
-    ctx.translate(vertical.value ? 0 : -speed.value, vertical.value ? speed.value : 0);
+    ctx.translate(vertical.value ? 0 : -controls.speed, vertical.value ? controls.speed : 0);
     ctx.drawImage(tempCanvas, 0, 0, width.value, height.value, 0, 0, width.value, height.value);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
@@ -180,20 +164,8 @@ export function useSpectrogram() {
     ctx.fillRect(0, 0, width.value, height.value)
   }
 
-  onKeyStroke(' ', (e) => { e.preventDefault(); paused.value = !paused.value })
-
-  onKeyStroke('Enter', () => clear())
-
-  function download(url) {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `spectrogram_${new Date().toISOString().slice(0, 19).replace(/T/, '_')}.png`
-    document.body.appendChild(a);
-    a.click();
-  }
-
   return {
-    initiate, startRecording, stopRecording, pics, startVideo, stopVideo, clear, download, time, screen, canvasElement, video, paused, recording, videoRecording, recordedWidth, smoothing, speed, midpoint, initiated, vertical, width, height, frame, steepness
+    initiate, startRecording, stopRecording, pics, clear, screen, canvasElement, video, paused, recording, recordedWidth, controls, params, initiated, vertical, width, height
   }
 }
 
