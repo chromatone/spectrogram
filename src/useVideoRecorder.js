@@ -1,4 +1,5 @@
 import { ref } from "vue"
+import { download } from "./utils"
 
 export function useVideoRecorder(video) {
   let recorder
@@ -18,6 +19,7 @@ export function useVideoRecorder(video) {
     recorder.ondataavailable = (event) => {
       const blob = event.data;
       const url = URL.createObjectURL(blob);
+      download(url, 'mp4')
       window.open(url, '_blank');
     };
     recorder.start()

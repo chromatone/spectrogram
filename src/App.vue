@@ -7,6 +7,7 @@ import ControlRotary from './ControlRotary.vue'
 import { version, year } from '../package.json'
 import { useSpectrogram } from './useSpectrogram';
 import { useVideoRecorder } from './useVideoRecorder';
+import { download } from './utils';
 
 const time = useTimestamp()
 
@@ -19,14 +20,6 @@ const { toggle, isSupported } = useFullscreen(screen)
 const { videoRecording, startVideo, stopVideo } = useVideoRecorder(video)
 
 const showVideo = ref(false)
-
-function download(url) {
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `spectrogram_${new Date().toISOString().slice(0, 19).replace(/T/, '_')}.png`
-  document.body.appendChild(a);
-  a.click();
-}
 
 onKeyStroke(' ', (e) => { e.preventDefault(); paused.value = !paused.value })
 
