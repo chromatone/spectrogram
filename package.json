@@ -2,7 +2,7 @@
 	"name": "chromatone-spectrogram",
 	"description": "Time-frequency sound analysis in color",
 	"private": true,
-	"version": "0.2.4",
+	"version": "0.3.0",
 	"year": 2024,
 	"homepage": "https://spectrogram.chromatone.center",
 	"repository": {
