@@ -1,3 +1,50 @@
+## v0.3.0 (2024-11-07)
+
+### New feature:
+
+- offline first PWA([`a8354e4`](https://github.com/chromatone/spectrogram/commit/a8354e42520cbc76ad3f9e152a3aeedd9b8e9b46)) (by davay)
+- no jekyll build on github pages publish([`c0bfa94`](https://github.com/chromatone/spectrogram/commit/c0bfa9405a45472fef5ded24196056208bfd7c56)) (by davay)
+
+## v0.2.4 (2024-11-05)
+
+### New feature:
+
+- download video too([`5aef100`](https://github.com/chromatone/spectrogram/commit/5aef100127db2cfc704229de68e1178bf2af75fa)) (by davay)
+- fresh deps([`84e53ae`](https://github.com/chromatone/spectrogram/commit/84e53ae9f5ac06ed51d9dd59eeeb05c86e67a2ca)) (by davay)
+- iOS icons([`7a46d52`](https://github.com/chromatone/spectrogram/commit/7a46d52f58f17b8384e1f24b401265c0c2557a58)) (by davay)
+- cleaner reactive UI structure([`342a183`](https://github.com/chromatone/spectrogram/commit/342a18314184ab684cf6c7b230c545abced05a23)) (by davay)
+- iOS icon([`5b62531`](https://github.com/chromatone/spectrogram/commit/5b6253161aac7c8bd0d6d08ca5ad233f1148c789)) (by davay)
+
+### Bugs fixed:
+
+- better PWA support([`f097ac6`](https://github.com/chromatone/spectrogram/commit/f097ac63038f8c6c4fc0669983b262a48db00084)) (by davay)
+
+## v0.2.3 (2024-11-05)
+
+### New feature:
+
+- leaner PWA([`6697a0d`](https://github.com/chromatone/spectrogram/commit/6697a0db8d9208d53043af2b6506b816adaf6efd)) (by davay)
+- modular composables([`a28e5e7`](https://github.com/chromatone/spectrogram/commit/a28e5e7f121d15c425dc9615b2a7397c6e21075b)) (by davay)
+
+## v0.2.2 (2024-11-05)
+
+### New feature:
+
+- PWA ready build([`c945186`](https://github.com/chromatone/spectrogram/commit/c94518682bfedc3fc04d3738b0a1ef0e7029d938)) (by davay)
+- useSpectrogram composable([`e79ef1e`](https://github.com/chromatone/spectrogram/commit/e79ef1e220e9cd7d7cc67c1877b6cb07f3908567)) (by davay)
+
+## v0.2.1 (2024-10-30)
+
+### New feature:
+
+- record video with audio([`c125fe1`](https://github.com/chromatone/spectrogram/commit/c125fe1fe9674faa55ff47b0c70e32d1e5aebd4c)) (by davay)
+- better stack explanaition([`6baeb90`](https://github.com/chromatone/spectrogram/commit/6baeb90e2029bcbf99307a69e098a1b472ff8ef9)) (by davay)
+
+### Bugs fixed:
+
+- iOS compatible pic saver([`8996037`](https://github.com/chromatone/spectrogram/commit/8996037867f2e798cb89ceca238a0cfd6e0fe39a)) (by davay)
+- iOS file saving([`9186f51`](https://github.com/chromatone/spectrogram/commit/9186f51579a2ea96cfb99447ef15d1aed16c9522)) (by davay)
+
 ## v0.2.0 (2024-10-23)
 
 ### New feature:
