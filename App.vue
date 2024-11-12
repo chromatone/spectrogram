@@ -68,7 +68,7 @@ onKeyStroke('Enter', () => clear())
       :width="width"
       :height="height"
       )
-  .flex.absolute.top-4.z-100.text-white.op-20.hover-op-100.transition(v-if="initiated")
+  .flex.absolute.top-6.z-100.text-white.op-20.hover-op-100.transition(v-if="initiated")
     button.p-4.text-xl.select-none.cursor-pointer(@pointerdown="paused = !paused")
       .i-la-play(v-if="paused")
       .i-la-pause(v-else)
@@ -78,7 +78,7 @@ onKeyStroke('Enter', () => clear())
     button.p-4.text-xl.select-none.cursor-pointer(@pointerdown="clear()")
       .i-la-trash-alt
 
-  .flex.absolute.bottom-2.mx-auto.z-100.text-white.op-20.hover-op-100.transition(v-if="initiated")
+  .flex.absolute.bottom-6.mx-auto.z-100.text-white.op-20.hover-op-100.transition(v-if="initiated")
     button.p-4.text-xl.select-none.cursor-pointer.transition(
       :style="{ opacity: showVideo ? 1 : 0.5 }"
       @pointerdown="showVideo = !showVideo; showVideo && video?.requestPictureInPicture?.()")
