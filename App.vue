@@ -2,12 +2,12 @@
 import { ref } from 'vue'
 import { onKeyStroke, useFullscreen, useTimestamp } from '@vueuse/core'
 
-import ControlRotary from './ControlRotary.vue'
+import ControlRotary from './components/ControlRotary.vue'
 
-import { version, year } from '../package.json'
-import { useSpectrogram } from './useSpectrogram';
-import { useVideoRecorder } from './useVideoRecorder';
-import { download } from './utils';
+import { version, year } from './package.json'
+import { useSpectrogram } from './composables/useSpectrogram';
+import { useVideoRecorder } from './composables/useVideoRecorder';
+import { download } from './composables/utils';
 
 const time = useTimestamp()
 
