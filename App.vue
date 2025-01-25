@@ -7,7 +7,14 @@ import ControlRotary from './components/ControlRotary.vue'
 import { version, year } from './package.json'
 import { useSpectrogram } from './composables/useSpectrogram';
 import { useVideoRecorder } from './composables/useVideoRecorder';
-import { download } from './composables/utils';
+
+function download(url, ext = 'png') {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `spectrogram_${new Date().toISOString().slice(0, 19).replace(/T/, '_')}.${ext}`
+  document.body.appendChild(a);
+  a.click();
+}
 
 const time = useTimestamp()
 
@@ -55,7 +62,7 @@ template(v-if="initiated")
   .h-4px.w-4px.absolute.z-150.rounded-4px(inert :style="{ backgroundColor: colorFreq(frequency), transform: `translate(${x - 1}px,${y - 1}px)` }")
   .z-140.text-white.absolute.text-right.w-110px.p-2.backdrop-blur-lg.bg-dark-100.bg-op-20.transition-opacity(inert :style="{ color: colorFreq(frequency), transform: `translate(${x - 110}px,${y - 65}px)` }") 
     .font-bold.text-xl.flex(:style="{ opacity: Math.round((freqPitch(frequency) - Math.floor(freqPitch(frequency))) * 10) % 10 > 0 ? .7 : 1, }") 
-      .p-0 {{ notes[(Math.round(freqPitch(frequency) - .2) % 12 + 12) % 12] }}
+      .p-0 {{ notes[(Math.round(freqPitch(frequency) - .2) % 12 + 12) % 12] }}{{ Math.floor((Math.round(freqPitch(frequency) - .2) - 3) / 12) + 4 }}
       .flex-1
       .p-0.op-80 {{ Math.round((freqPitch(frequency) - Math.floor(freqPitch(frequency))) * 10) % 10 > 0 ? '~' : '' }} 
     .p-0 {{ frequency.toFixed(1) }} Hz  
