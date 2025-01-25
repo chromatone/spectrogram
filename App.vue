@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { onKeyStroke, useFullscreen, useTimestamp } from '@vueuse/core'
 
 import ControlRotary from './components/ControlRotary.vue'
@@ -12,8 +12,12 @@ import { download } from './composables/utils';
 const time = useTimestamp()
 
 const {
-  screen, canvasElement, video, paused, recording, recordedWidth, controls, params, initiated, vertical, width, height, initiate, startRecording, stopRecording, pics, clear
+  screen, canvasElement, video, paused, recording, recordedWidth, controls, params, initiated, vertical, width, height, initiate, startRecording, stopRecording, pics, clear, barFrequencies, colorFreq
 } = useSpectrogram()
+
+import { useWakeLock } from '@vueuse/core'
+
+const { isSupported: isWakeLockSupported, request } = useWakeLock()
 
 const { toggle, isSupported } = useFullscreen(screen)
 
@@ -25,9 +29,37 @@ onKeyStroke(' ', (e) => { e.preventDefault(); paused.value = !paused.value })
 
 onKeyStroke('Enter', () => clear())
 
+
+import { useWindowSize, useMouse } from '@vueuse/core'
+const { x, y } = useMouse()
+const { width: winW, height: winH } = useWindowSize()
+
+const frequency = computed(() => {
+  if (!barFrequencies.value) return 0
+  return barFrequencies.value[Math.floor((1 - y.value / winH.value) * barFrequencies.value.length)].freq
+})
+
+function freqPitch(freq, middleA = 440) {
+  return 12 * (Math.log(Number(freq) / middleA) / Math.log(2))
+}
+
+const notes = ['A', 'A#', 'B', 'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#']
+
+
 </script>
 
 <template lang="pug">
+template(v-if="initiated")
+  .w-2px.h-full.absolute.bg-light-100.bg-op-80.backdrop-blur.z-100.filter-invert(inert :style="{ transform: `translate(${x}px,0)` }")
+  .h-2px.w-full.absolute.bg-light-100.bg-op-80.backdrop-blur.z-100.filter-invert(inert :style="{ transform: `translate(0,${y}px)` }")
+  .h-4px.w-4px.absolute.z-150.rounded-4px(inert :style="{ backgroundColor: colorFreq(frequency), transform: `translate(${x - 1}px,${y - 1}px)` }")
+  .z-140.text-white.absolute.text-right.w-110px.p-2.backdrop-blur-lg.bg-dark-100.bg-op-20.transition-opacity(inert :style="{ color: colorFreq(frequency), transform: `translate(${x - 110}px,${y - 65}px)` }") 
+    .font-bold.text-xl.flex(:style="{ opacity: Math.round((freqPitch(frequency) - Math.floor(freqPitch(frequency))) * 10) % 10 > 0 ? .7 : 1, }") 
+      .p-0 {{ notes[(Math.round(freqPitch(frequency) - .2) % 12 + 12) % 12] }}
+      .flex-1
+      .p-0.op-80 {{ Math.round((freqPitch(frequency) - Math.floor(freqPitch(frequency))) * 10) % 10 > 0 ? '~' : '' }} 
+    .p-0 {{ frequency.toFixed(1) }} Hz  
+
 .flex.flex-col.justify-center.bg-black.relative.w-full.items-center
   .text-center.absolute.m-auto.top-0.w-full.h-full.text-white.flex.flex-col.items-center.justify-center.gap-4.p-4.bg-stone-800(v-if="!initiated") 
 
@@ -39,7 +71,7 @@ onKeyStroke('Enter', () => clear())
         .font-bold.text-3xl.op-70 Chromatone 
       h1.text-6xl Spectrogram
       h2.text-xl Visual audio feedback instrument
-    form(@submit.prevent="initiate()")
+    form(@submit.prevent="initiate(); isWakeLockSupported && request()")
       button.m-2.text-2xl.border-1.p-4.rounded-xl(
         title="Press here to start" 
         autofocus
@@ -61,13 +93,16 @@ onKeyStroke('Enter', () => clear())
         a.underline(href="https://github.com/davay42" target="_blank") davay42 
         .p-0.op-50 MIT {{ year }}
 
-  .fullscreen-container#screen(ref="screen")
+  .fullscreen-container#screen.cursor-none(ref="screen")
     canvas#spectrogram.max-w-full(
       @pointerdown="paused = !paused"
       ref="canvasElement"
       :width="width"
       :height="height"
       )
+
+
+
   .flex.absolute.top-6.z-100.text-white.op-20.hover-op-100.transition(v-if="initiated")
     button.p-4.text-xl.select-none.cursor-pointer(@pointerdown="paused = !paused")
       .i-la-play(v-if="paused")

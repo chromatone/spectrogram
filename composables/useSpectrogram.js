@@ -32,6 +32,8 @@ export function useSpectrogram() {
   const recording = ref(false)
   const recordedWidth = ref(0)
 
+  const barFrequencies = ref()
+
   const vertical = useStorage('vertical', false)
 
   const controls = useControls(params)
@@ -56,6 +58,10 @@ export function useSpectrogram() {
     const videostream = canvas.captureStream();
     video.value.srcObject = videostream;
   });
+
+  function freqPitch(freq) { return 12 * Math.log2(Number(freq) / 440) }
+  function colorFreq(freq, value = 1) { return `hsl(${freqPitch(freq) * 30}, ${value * 100}%, ${value * 75}%)`; }
+  function sigmoid(value) { return 1 / (1 + Math.exp(-controls.steep * (value - controls.midpoint))); }
 
   function initiate() {
     navigator.mediaDevices.getUserMedia({
@@ -131,21 +137,23 @@ export function useSpectrogram() {
     recordedWidth.value = newWidth
   };
 
-  const freqPitch = (freq) => 12 * Math.log2(Number(freq) / 440);
-  const colorFreq = (freq, value) => `hsl(${freqPitch(freq) * 30}, ${value * 100}%, ${value * 75}%)`;
-  const sigmoid = (value) => 1 / (1 + Math.exp(-controls.steep * (value - controls.midpoint)));
+
 
   const onCanvasDraw = (instance) => {
     if (paused.value) return;
 
     tempCtx.drawImage(canvas, 0, 0, width.value, height.value, 0, 0, width.value, height.value);
 
-    const bars = instance.getBars().map(bar => colorFreq(bar.freq, sigmoid(bar.value[0])));
+    const bars = instance.getBars()
 
-    const barWidth = width.value / bars.length;
-    const barHeight = height.value / bars.length;
+    const colors = bars.map(bar => colorFreq(bar.freq, sigmoid(bar.value[0])));
 
-    bars.forEach((barColor, i) => {
+    if (!barFrequencies.value) barFrequencies.value = bars
+
+    const barWidth = width.value / colors.length;
+    const barHeight = height.value / colors.length;
+
+    colors.forEach((barColor, i) => {
       const [x, y, w, h] = vertical.value
         ? [i * barWidth, 0, barWidth, controls.speed]
         : [width.value - controls.speed, height.value - (i + 1) * barHeight, controls.speed, barHeight];
@@ -169,7 +177,7 @@ export function useSpectrogram() {
   }
 
   return {
-    initiate, startRecording, stopRecording, pics, clear, screen, canvasElement, video, paused, recording, recordedWidth, controls, params, initiated, vertical, width, height
+    initiate, startRecording, stopRecording, pics, colorFreq, clear, screen, canvasElement, video, paused, recording, recordedWidth, controls, params, initiated, vertical, width, height, barFrequencies
   }
 }
 
