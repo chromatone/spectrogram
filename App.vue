@@ -95,13 +95,9 @@ template(v-if="initiated")
 
   .fullscreen-container#screen.cursor-none(ref="screen")
     canvas#spectrogram.max-w-full(
-      @pointerdown="paused = !paused"
       ref="canvasElement"
       :width="width"
-      :height="height"
-      )
-
-
+      :height="height")
 
   .flex.absolute.top-6.z-100.text-white.op-20.hover-op-100.transition(v-if="initiated")
     button.p-4.text-xl.select-none.cursor-pointer(@pointerdown="paused = !paused")
