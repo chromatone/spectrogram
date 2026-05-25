@@ -1,3 +1,16 @@
+## v0.4.0 (2026-05-25)
+
+### Breaking changes:
+
+- Replaced AudioMotionAnalyzer with custom 12-TET implementation (zero external audio dependencies)
+
+### New features:
+
+- Custom 12-TET frequency mapping with exact semitone bands
+- Pink noise correction: +3dB/octave in dB space for perceptually flat display
+- Scientifically-grounded frequency compensation (1/f spectrum correction)
+- Simplified control set: fftSize, smooth, speed, midpoint, steep
+
 ## v0.3.0 (2024-11-07)
 
 ### New feature:
