@@ -3,11 +3,11 @@ import { useStorage, useWindowSize } from '@vueuse/core'
 import { useClamp } from '@vueuse/math';
 
 const params = {
-  fftSize: { default: 14, min: 12, max: 14, step: 1, fixed: 0 },
-  smooth: { default: 0.5, min: 0, max: 1, step: 0.01, fixed: 2 },
-  speed: { default: 2, min: 1, max: 4, step: 1, fixed: 0 },
-  midpoint: { default: 0.5, min: 0, max: 1, step: 0.0001, fixed: 2 },
-  steep: { default: 10, min: 3, max: 30, step: 0.001, fixed: 2 }
+  fftSize: { default: 13, min: 12, max: 14, step: 1, fixed: 0 },
+  smooth: { default: 0, min: 0, max: 1, step: 0.01, fixed: 1 },
+  speed: { default: 1, min: 1, max: 4, step: 1, fixed: 0 },
+  midpoint: { default: 0.3, min: 0, max: 1, step: 0.0001, fixed: 2 },
+  steep: { default: 20, min: 3, max: 40, step: 0.001, fixed: 1 }
 }
 
 function useControls(paramsList) {
