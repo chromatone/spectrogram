@@ -43,7 +43,9 @@ const { width: winW, height: winH } = useWindowSize()
 
 const frequency = computed(() => {
   if (!barFrequencies.value) return 0
-  return barFrequencies.value[Math.floor((1 - y.value / winH.value) * barFrequencies.value.length)].freq
+  const index = Math.floor((1 - y.value / winH.value) * barFrequencies.value.length)
+  const clampedIndex = Math.max(0, Math.min(barFrequencies.value.length - 1, index))
+  return barFrequencies.value[clampedIndex].freq
 })
 
 function freqPitch(freq, middleA = 440) {

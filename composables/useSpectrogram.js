@@ -293,7 +293,9 @@ export function useSpectrogram() {
     // `speed` rows written at once for faster scroll
     const speed = controls.speed
     for (let s = 0; s < speed; s++) {
-      for (let i = 0; i < numBands; i++) rowBuf[i] = Math.min(255, Math.max(0, bandValues[i] * 255) | 0)
+      for (let i = 0; i < numBands; i++) {
+        rowBuf[i] = Math.min(255, Math.max(0, bandValues[i] * 255) | 0)
+      }
 
       gl.bindTexture(gl.TEXTURE_2D, tex)
       gl.texSubImage2D(
