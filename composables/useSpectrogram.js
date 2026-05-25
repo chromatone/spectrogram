@@ -86,6 +86,12 @@ export function useSpectrogram() {
       audio.connectInput(micStream)
       initiated.value = true
       video.value.play()
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && audio.audioCtx.state === 'suspended') {
+          audio.audioCtx.resume()
+        }
+      })
     }).catch((e) => {
       console.log('mic denied', e)
     })
@@ -142,32 +148,30 @@ export function useSpectrogram() {
   const onCanvasDraw = (instance) => {
     if (paused.value) return;
 
-    tempCtx.drawImage(canvas, 0, 0, width.value, height.value, 0, 0, width.value, height.value);
-
     const bars = instance.getBars()
-
-    const colors = bars.map(bar => colorFreq(bar.freq, sigmoid(bar.value[0])));
-
     if (!barFrequencies.value) barFrequencies.value = bars
 
-    const barWidth = width.value / colors.length;
-    const barHeight = height.value / colors.length;
+    const speed = controls.speed
+    const isVert = vertical.value
+    const barWidth = width.value / bars.length
+    const barHeight = height.value / bars.length
 
-    colors.forEach((barColor, i) => {
-      const [x, y, w, h] = vertical.value
-        ? [i * barWidth, 0, barWidth, controls.speed]
-        : [width.value - controls.speed, height.value - (i + 1) * barHeight, controls.speed, barHeight];
-      ctx.fillStyle = barColor;
-      ctx.fillRect(x, y, w, h);
-    });
+    tempCtx.drawImage(canvas, 0, 0)
 
-    ctx.translate(vertical.value ? 0 : -controls.speed, vertical.value ? controls.speed : 0);
-    ctx.drawImage(tempCanvas, 0, 0, width.value, height.value, 0, 0, width.value, height.value);
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-
-    if (recording.value) {
-      recordFrame()
+    for (let i = 0; i < bars.length; i++) {
+      ctx.fillStyle = colorFreq(bars[i].freq, sigmoid(bars[i].value[0]))
+      if (isVert) {
+        ctx.fillRect(i * barWidth, 0, barWidth, speed)
+      } else {
+        ctx.fillRect(width.value - speed, height.value - (i + 1) * barHeight, speed, barHeight)
+      }
     }
+
+    ctx.setTransform(1, 0, 0, 1, isVert ? 0 : -speed, isVert ? speed : 0)
+    ctx.drawImage(tempCanvas, 0, 0)
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+
+    if (recording.value) recordFrame()
   };
 
 

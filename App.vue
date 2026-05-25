@@ -57,8 +57,8 @@ const notes = ['A', 'A#', 'B', 'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#']
 
 <template lang="pug">
 template(v-if="initiated")
-  .w-2px.h-full.absolute.bg-light-100.bg-op-80.backdrop-blur.z-100.filter-invert(inert :style="{ transform: `translate(${x}px,0)` }")
-  .h-2px.w-full.absolute.bg-light-100.bg-op-80.backdrop-blur.z-100.filter-invert(inert :style="{ transform: `translate(0,${y}px)` }")
+  .w-2px.h-full.absolute.backdrop-blur.z-100(inert :style="{ backgroundColor: colorFreq(frequency), opacity: 0.15, transform: `translate(${x}px,0)` }")
+  .h-2px.w-full.absolute.backdrop-blur.z-100(inert :style="{ backgroundColor: colorFreq(frequency), opacity: 0.15, transform: `translate(0,${y}px)` }")
   .h-4px.w-4px.absolute.z-150.rounded-4px(inert :style="{ backgroundColor: colorFreq(frequency), transform: `translate(${x - 1}px,${y - 1}px)` }")
   .z-140.text-white.absolute.text-right.w-110px.p-2.backdrop-blur-lg.bg-dark-100.bg-op-20.transition-opacity(inert :style="{ color: colorFreq(frequency), transform: `translate(${x - 110}px,${y - 65}px)` }") 
     .font-bold.text-xl.flex(:style="{ opacity: Math.round((freqPitch(frequency) - Math.floor(freqPitch(frequency))) * 10) % 10 > 0 ? .7 : 1, }") 
