@@ -158,7 +158,7 @@ template(v-if="initiated")
       .i-la-times
 </template>
 
-<style lang="postcss">
+<style>
 #screen {
   width: 100%;
   height: 100%;
