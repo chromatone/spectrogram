@@ -18,10 +18,31 @@ export function useVideoRecorder(video) {
     const videoStream = video.value.srcObject
     const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
 
-    const combinedStream = new MediaStream([...videoStream.getTracks(), ...audioStream.getTracks()]);
+    const combinedStream = new MediaStream([...videoStream.getTracks(), ...audioStream.getTracks()])
 
+    // High quality video recording options (must include audio codec)
+    // Safari prefers MP4/H.264, others prefer WebM/VP9
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent)
+    let options
 
-    recorder = new MediaRecorder(combinedStream)
+    if (isSafari) {
+      // Safari: MP4 with H.264 and AAC
+      options = { mimeType: 'video/mp4;codecs=h264,aac', videoBitsPerSecond: 8000000 }
+      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+        options = { mimeType: 'video/mp4' }
+      }
+    } else {
+      // Chrome/Firefox: WebM with VP9/Opus
+      options = { mimeType: 'video/webm;codecs=vp9,opus', videoBitsPerSecond: 8000000 }
+      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+        options = { mimeType: 'video/webm;codecs=vp8,opus' }
+      }
+      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+        options = { mimeType: 'video/webm' }
+      }
+    }
+
+    recorder = new MediaRecorder(combinedStream, options)
 
     recorder.ondataavailable = (event) => {
       const blob = event.data;
