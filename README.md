@@ -8,24 +8,27 @@ A zero-dependency, scientifically-grounded audio visualization tool built for mu
 
 **Features:**
 - **12-TET frequency mapping** — Musical notes (A0 to C9) mapped to exact semitone bands
-- **Pink noise correction** — +3dB/octave compensation in dB space for perceptually flat display
+- **Pink noise correction** — 2dB/octave compensation in GPU shader for perceptually flat display
+- **WebGL2 rendering** — GPU-accelerated ring buffer texture for smooth, high-performance visualization
+- **Display P3 support** — Wider color gamut detection with saturation boost on supported displays
 - **High-resolution analysis** — Configurable FFT size (4096-16384) for precise frequency resolution
 - **Signal-to-noise control** — Sigmoid-based threshold and steepness adjustments
-- **Recording & capture** — Video recording and screenshot capabilities
+- **Recording & capture** — High-quality video recording (VP9/Opus or H.264/AAC) and screenshot capabilities
 - **PWA support** — Install as a standalone app, works offline
 - **Zero external audio dependencies** — Pure Web Audio API implementation
 
 ## How it works
 
-The spectrogram uses the Web Audio API's `AnalyserNode` with custom 12-TET band mapping:
+The spectrogram uses the Web Audio API's `AnalyserNode` with WebGL2-accelerated rendering:
 
 1. **FFT analysis** — Raw frequency data captured via `getFloatFrequencyData()`
 2. **12-TET band integration** — FFT bins summed into musical semitone bands (10 sub-bands per semitone)
-3. **Pink noise correction** — +3dB/octave added in dB space to compensate for 1/f spectral slope
-4. **Sigmoid processing** — Signal-to-noise ratio control via midpoint and steepness parameters
-5. **Chromatic color mapping** — HSL colors based on pitch class
+3. **Texture upload** — Band values written to a ring buffer texture (LUMINANCE/UNSIGNED_BYTE)
+4. **GPU shader processing** — Pink noise correction (2dB/octave), sigmoid contrast, and HSL color mapping in fragment shader
+5. **Ring buffer scrolling** — Seamless scrolling via texture UV offset with WRAP_T=REPEAT
+6. **Display P3 detection** — Saturation boost applied when wide gamut display is available
 
-The pink noise correction ensures that natural/musical signals (which typically follow a 1/f spectrum) appear perceptually flat across the frequency range.
+The pink noise correction ensures that natural/musical signals (which typically follow a 1/f spectrum) appear perceptually flat across the frequency range. All per-pixel processing is GPU-bound for maximum performance.
 
 ## Controls
 

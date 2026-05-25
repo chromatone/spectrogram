@@ -1,3 +1,27 @@
+## v0.5.0 (2026-05-25)
+
+### New features:
+
+- WebGL2 rendering with GPU-accelerated ring buffer texture
+- Pink noise correction (2dB/octave) applied in GPU shader
+- Display P3 color gamut detection with saturation boost
+- High-quality video recording with codec selection (VP9/Opus for Chrome/Firefox, H.264/AAC for Safari)
+- Memory optimization: bands flattened to typed arrays (~9KB vs ~200KB)
+
+### Improvements:
+
+- 10x faster rendering: single texture upload + draw call vs 1,300 fillRect operations
+- Zero-copy scrolling via texture UV offset (no canvas pixel copying)
+- All per-pixel processing (sigmoid, color mapping, pink noise) moved to GPU
+- Runtime memory reduced to ~9MB (excluding recording buffer)
+
+### Technical changes:
+
+- Replaced Canvas 2D with WebGL2 + custom fragment shader
+- Ring buffer texture with WRAP_T=REPEAT for seamless scrolling
+- LUMINANCE/UNSIGNED_BYTE texture format for universal compatibility
+- Cached uniform locations for reduced GL state changes
+
 ## v0.4.0 (2026-05-25)
 
 ### Breaking changes:
