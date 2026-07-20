@@ -142,7 +142,7 @@ template(v-if="initiated")
 
   .absolute.my-auto.left-2.flex.flex-col.text-white.items-center.overscroll-none.overflow-x-hidden.overflow-y-scroll.bg-dark-900.bg-op-20.backdrop-blur.op-40.hover-op-100.transition.max-h-100vh.overflow-y-scroll.scrollbar-thin.rounded-xl.p-2.z-50(v-show="initiated" style="scrollbar-width: none;") 
     .is-group.flex.flex-col.gap-2
-      ControlRotary(v-for="(param, p) in params" v-model="controls[p]" :min="param.min" :max="param.max" :step="param.step" :param="p" :fixed="param.fixed")
+      ControlRotary(v-for="(param, p) in params" v-model="controls[p]" :min="param.min" :max="param.max" :step="param.step" :param="p" :fixed="param.fixed" v-show="!param?.hidden")
 
   .absolute.bottom-20.border-1.border-light-200.border-op-50.p-2.text-white.flex.gap-2.max-w-80vw.overflow-x-scroll.rounded-xl.z-20(v-if="pics.length")
     .p-0.relative.min-w-30.bg-black.flex.justify-center.border-1.border-light-200.border-op-50.rounded-lg.overflow-hidden(v-for="(pic, p) in pics" :key="pic") 

@@ -7,7 +7,12 @@ const params = {
   smooth: { default: 0, min: 0, max: 1, step: 0.01, fixed: 1 },
   speed: { default: 1, min: 1, max: 4, step: 1, fixed: 0 },
   midpoint: { default: 0.3, min: 0, max: 1, step: 0.0001, fixed: 2 },
-  steep: { default: 20, min: 3, max: 40, step: 0.001, fixed: 1 }
+  steep: { default: 20, min: 3, max: 40, step: 0.001, fixed: 1 },
+  // --- cochleagram-inspired controls ---
+  weighting: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },   // 0 = pink-noise/spectral-tilt correction, 1 = equal-loudness (dB-A-like) correction
+  auditory: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },    // 0 = constant-Q musical (cents-wide) bands, 1 = ERB auditory-filter bands
+  integration: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true }, // amount of cochlear-style frequency-dependent temporal smoothing
+  sharpen: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true }      // lateral-inhibition style spectral contrast enhancement
 }
 
 function useControls(paramsList) {
@@ -40,11 +45,21 @@ uniform int rows;      // texture height == time axis length
 uniform float steep, midpoint;
 uniform int vert;      // 1 = vertical scroll
 uniform int p3;        // 1 = Display P3 available (boost saturation)
+uniform float weighting; // 0 = pink/tilt correction, 1 = equal-loudness (dB-A-like) correction
 
 // HSL to RGB (compact, no branches)
 vec3 hsl(float h,float s,float l){
   vec3 rgb=clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)-1.,0.,1.);
   return l+s*(rgb-.5)*(1.-abs(2.*l-1.));
+}
+
+// Compact A-weighting approximation (relative dB, ~0 near 2kHz, negative at bass/treble)
+// Cheap on GPU: a handful of muls + one sqrt + one log per fragment.
+float aWeightDb(float f){
+  float f2 = f*f;
+  float num = 148693636. * f2 * f2; // 12194^2
+  float den = (f2+424.36) * sqrt((f2+11599.29)*(f2+544496.41)) * (f2+148693636.);
+  return 20. * log(num/den) / log(10.) + 2.0;
 }
 
 void main(){
@@ -67,7 +82,12 @@ void main(){
   float refFreq = 440.; // A4 reference
   float bandFreq = 27.5 * pow(2., freqUV * 111. / 12.); // A0 * 2^(semitones/12)
   float pinkBoost = 2. * log2(bandFreq / refFreq);
-  float corrected = val + pinkBoost * 0.01; // scale dB to 0-1 range
+
+  // Perceptual loudness weighting: blend spectral-tilt correction (source-centric)
+  // with an equal-loudness / dB-A-like correction (ear-centric): dims bands the
+  // ear is less sensitive to, so brightness tracks perceived loudness, not raw energy.
+  float loudnessCorrection = mix(pinkBoost * 0.01, aWeightDb(bandFreq) * 0.002, weighting);
+  float corrected = val + loudnessCorrection;
 
   // Sigmoid contrast
   float v = 1./(1.+exp(-steep*(corrected-midpoint)));
@@ -89,6 +109,7 @@ export function useSpectrogram() {
   let audioCtx, analyzer, micSource
   let fftData
   let bandValues, bandBinLo, bandBinHi // typed arrays instead of objects
+  let bandRaw, bandSharp, bandSmooth, bandAlpha // cochlear-style processing buffers
   let numBands = 0
   let animationId
   let writeRow = 0   // current ring buffer write position
@@ -139,7 +160,7 @@ export function useSpectrogram() {
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0)
 
     // Cache all uniform locations once
-    for (const u of ['tex', 'writeRow', 'rows', 'steep', 'midpoint', 'vert', 'p3'])
+    for (const u of ['tex', 'writeRow', 'rows', 'steep', 'midpoint', 'vert', 'p3', 'weighting'])
       uloc[u] = gl.getUniformLocation(prog, u)
 
     gl.uniform1i(uloc.tex, 0)
@@ -162,6 +183,7 @@ export function useSpectrogram() {
 
     rowBuf = new Uint8Array(numBands) // numBands is now a global variable
     writeRow = 0
+    if (bandSmooth) bandSmooth.fill(0)
   }
 
   const setSize = (w, h) => {
@@ -189,6 +211,12 @@ export function useSpectrogram() {
   function colorFreq(freq, value = 1) { return `hsl(${freqPitch(freq) * 30}, ${value * 100}%, ${value * 75}%)`; }
   function midiToFreq(midi) { return BASE_FREQ * 2 ** ((midi - BASE_NOTE) / 12) }
   function sigmoid(value) { return 1 / (1 + Math.exp(-controls.steep * (value - controls.midpoint))); }
+  function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x }
+  // Glasberg & Moore ERB (Equivalent Rectangular Bandwidth), in Hz — the
+  // auditory filter width of the cochlea at a given frequency. Nearly
+  // constant (~24Hz) in the bass, roughly proportional to freq in the treble —
+  // unlike a constant-Q musical filterbank, which is proportional everywhere.
+  function erb(freq) { return 24.7 * (4.37 * freq / 1000 + 1) }
 
   function generateBands() {
     const subBands = 10
@@ -201,9 +229,23 @@ export function useSpectrogram() {
       for (let i = -halfSub; i <= halfSub; i++) {
         const centsOffset = (i / halfSub) * 50
         const freq = centerFreq * 2 ** (centsOffset / 1200)
+
+        // Constant-Q (musical) bandwidth: proportional to freq, same in every octave
         const centsWidth = 50 / halfSub
-        const freqLo = freq * 2 ** (-centsWidth / 1200)
-        const freqHi = freq * 2 ** (centsWidth / 1200)
+        const freqLoQ = freq * 2 ** (-centsWidth / 1200)
+        const freqHiQ = freq * 2 ** (centsWidth / 1200)
+
+        // Auditory (ERB) bandwidth: cochlea's real filter width — nearly
+        // constant in Hz at low freq, wider than a semitone down there,
+        // narrower than a semitone (relatively) up high.
+        const halfErb = erb(freq) / (2 * subBands)
+        const freqLoErb = freq - halfErb
+        const freqHiErb = freq + halfErb
+
+        // 'auditory' knob: 0 = pure musical/constant-Q, 1 = pure ERB auditory filter
+        const a = controls.auditory
+        const freqLo = freqLoQ + (freqLoErb - freqLoQ) * a
+        const freqHi = freqHiQ + (freqHiErb - freqHiQ) * a
 
         tempBands.push({ freq, freqLo, freqHi, note, centsOffset })
       }
@@ -213,6 +255,20 @@ export function useSpectrogram() {
     bandValues = new Float32Array(numBands)
     bandBinLo = new Uint16Array(numBands)
     bandBinHi = new Uint16Array(numBands)
+    bandRaw = new Float32Array(numBands)
+    bandSharp = new Float32Array(numBands)
+    bandSmooth = new Float32Array(numBands)
+    bandAlpha = new Float32Array(numBands)
+
+    // Precompute per-band temporal-integration coefficients: the cochlea has
+    // high time resolution (fast update, large alpha) at high frequencies to
+    // catch transients, and high frequency resolution (slow update, small
+    // alpha) at low frequencies. Runs once per band-regen, not per frame.
+    const logLo = Math.log2(20), logHi = Math.log2(8000)
+    for (let i = 0; i < numBands; i++) {
+      const t = clamp01((Math.log2(tempBands[i].freq) - logLo) / (logHi - logLo))
+      bandAlpha[i] = 0.08 + t * 0.82
+    }
 
     if (analyzer) {
       const sampleRate = audioCtx.sampleRate
@@ -267,6 +323,7 @@ export function useSpectrogram() {
   function processFFT() {
     analyzer.getFloatFrequencyData(fftData)
 
+    // 1. Raw per-band linear amplitude (same as before)
     for (let i = 0; i < numBands; i++) {
       let sum = 0
       let count = 0
@@ -277,7 +334,33 @@ export function useSpectrogram() {
       }
 
       const avgDb = count > 0 ? sum / count : -100
-      bandValues[i] = Math.max(0, Math.pow(10, (avgDb + 100) / 100 - 1))
+      bandRaw[i] = Math.max(0, Math.pow(10, (avgDb + 100) / 100 - 1))
+    }
+
+    // 2. Lateral inhibition (on-center/off-surround), like adjacent hair
+    // cells suppressing each other on the basilar membrane — sharpens ridges
+    // between simultaneous partials instead of leaving them as a soft blob.
+    const sharpen = controls.sharpen
+    if (sharpen > 0) {
+      for (let i = 0; i < numBands; i++) {
+        const prev = bandRaw[i > 0 ? i - 1 : i]
+        const next = bandRaw[i < numBands - 1 ? i + 1 : i]
+        const lateral = (prev + next) * 0.5
+        bandSharp[i] = Math.max(0, bandRaw[i] + (bandRaw[i] - lateral) * sharpen)
+      }
+    } else {
+      bandSharp.set(bandRaw)
+    }
+
+    // 3. Frequency-dependent temporal integration: bass bands are slow
+    // (long integration, like the cochlea's low-frequency response), treble
+    // bands are fast (short integration, catches transients/clicks).
+    // integration=0 reproduces the old instant/per-frame behavior exactly.
+    const integ = controls.integration
+    for (let i = 0; i < numBands; i++) {
+      const a = integ > 0 ? (1 - integ) + integ * bandAlpha[i] : 1
+      bandSmooth[i] += (bandSharp[i] - bandSmooth[i]) * a
+      bandValues[i] = bandSmooth[i]
     }
   }
 
@@ -314,6 +397,7 @@ export function useSpectrogram() {
     gl.uniform1f(uloc.midpoint, controls.midpoint)
     gl.uniform1i(uloc.vert, vertical.value ? 1 : 0)
     gl.uniform1i(uloc.p3, window.matchMedia('(color-gamut: p3)').matches ? 1 : 0)
+    gl.uniform1f(uloc.weighting, controls.weighting)
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
 
@@ -390,10 +474,13 @@ export function useSpectrogram() {
     if (analyzer) analyzer.smoothingTimeConstant = v
   })
 
+  watch(() => controls.auditory, () => {
+    if (analyzer) generateBands() // bin ranges depend on the constant-Q/ERB blend
+  })
 
   // Initialize barFrequencies on first render
   watch(initiated, (v) => {
-    if (v && !barFrequencies.value) barFrequencies.value = bands
+    if (v && !barFrequencies.value) barFrequencies.value = barFrequencies.value
   })
 
   return {

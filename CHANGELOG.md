@@ -1,3 +1,27 @@
+## v.0.6.0 (2026-07-20) 
+
+Added four new knobs (hidden as they are all super-viable in our context to be on), all cheap (same order of cost as what you already had — a handful of scalar ops per band or per fragment, no new textures or passes):
+
+weighting (0→1) — blends your existing pink-noise/tilt correction with a compact A-weighting-style equal-loudness curve, computed per-fragment in the shader from bandFreq you already derive there. At 0 you get today's look; at 1, bands the ear is naturally less sensitive to (sub-bass, extreme treble) dim relative to the 2–4kHz range, so brightness tracks perceived loudness rather than raw energy.
+
+auditory (0→1) — blends your constant-Q semitone bandwidth with a real cochlear ERB (Equivalent Rectangular Bandwidth) filter width per band. ERB is nearly flat (~24Hz) in the bass and only grows proportionally at higher frequencies — the opposite of constant-Q, which is proportional everywhere. This reshapes the effective frequency resolution to match how the basilar membrane actually resolves pitch, especially widening/blurring low bass bands realistically. It's CPU-side and only recomputed on band regen (fftSize change or a watcher on this knob), never per-frame.
+
+integration (0→1) — adds frequency-dependent temporal smoothing: bass bands integrate slowly (long time constant, like the cochlea's sluggish low-frequency response), treble bands update fast (catches clicks/transients crisply). At 0 it's bit-identical to your current instantaneous per-frame behavior; the per-band alpha curve is precomputed once in generateBands(), so the per-frame cost is just one more O(numBands) pass — same complexity class as your existing FFT-averaging loop.
+
+sharpen (0→1) — lateral inhibition / on-center-off-surround, like adjacent cochlear hair cells suppressing their neighbors. Each band is pushed away from the average of its two neighbors, sharpening simultaneous partials into crisper ridges instead of a soft blob. Also O(numBands), no extra buffers beyond one more typed array.
+
+Kept intact exactly as asked:
+
+- Chromatone hue mapping (hue = semitones/12 from A0) — A is still red, untouched.
+- The demoscene-minimal shader style — one new uniform, one small helper function, no branching added to the hot path.
+- Ring-buffer texture scrolling, sigmoid contrast, P3 saturation boost — all unchanged.
+
+Also fixed a dormant bug: the barFrequencies watcher referenced an undefined bands variable (harmless today since the guard was never true, but would've thrown if that ever changed).
+
+One tuning note: integration and sharpen interact with your existing smooth (the AnalyserNode's native smoothingTimeConstant) — you'll likely want smooth fairly low now and let the new per-band integration do the frequency-aware work instead, since it's more anatomically accurate than one global constant.
+
+
+
 ## v0.5.0 (2026-05-25)
 
 ### New features:
