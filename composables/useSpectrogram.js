@@ -1,3 +1,4 @@
+
 import { ref, onMounted, watch, reactive } from 'vue'
 import { useStorage, useWindowSize } from '@vueuse/core'
 import { useClamp } from '@vueuse/math';
@@ -5,15 +6,15 @@ import { useClamp } from '@vueuse/math';
 const params = {
   fftSize: { default: 13, min: 12, max: 14, step: 1, fixed: 0 },
   smooth: { default: 0, min: 0, max: 1, step: 0.01, fixed: 1 },
-  speed: { default: 1, min: 1, max: 4, step: 1, fixed: 0 },
+  // Changed speed to allow fractional values (down to 0.1)
+  speed: { default: 1, min: 0.1, max: 4, step: 0.1, fixed: 1 },
   midpoint: { default: 0.3, min: 0, max: 1, step: 0.0001, fixed: 2 },
   steep: { default: 20, min: 3, max: 40, step: 0.001, fixed: 1 },
-  // --- cochleagram-inspired controls ---
-  weighting: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },   // 0 = pink-noise/spectral-tilt correction, 1 = equal-loudness (dB-A-like) correction
-  auditory: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },    // 0 = constant-Q musical (cents-wide) bands, 1 = ERB auditory-filter bands
-  integration: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true }, // amount of cochlear-style frequency-dependent temporal smoothing
-  sharpen: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },     // lateral-inhibition style spectral contrast enhancement
-  offset: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2 }       // 1 = scroll from far edge, 0 = scroll from near edge, 0.5 = mirrored from center
+  weighting: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },
+  auditory: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },
+  integration: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },
+  sharpen: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },
+  offset: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2 }
 }
 
 function useControls(paramsList) {
@@ -25,93 +26,68 @@ function useControls(paramsList) {
   return controls
 }
 
-// WebGL shaders — demoscene style, minimal but readable
+// WebGL shaders
 const VERT = `#version 300 es
-in vec2 p;
+  in vec2 p;
 out vec2 uv;
-void main(){uv=p*.5+.5;gl_Position=vec4(p,0,1);}
+void main(){ uv = p * .5 + .5; gl_Position = vec4(p, 0, 1); }
 `
 
-// Fragment shader:
-// - ring buffer texture scroll via writeRow uniform
-// - HSL color from pitch (hue = semitones from A4 * 30deg)
-// - sigmoid contrast + brightness from midpoint/steep uniforms
+// Updated Fragment shader:
+// Uses float 'scroll' instead of int 'writeRow' to allow fractional/sub-pixel smooth scrolling
 const FRAG = `#version 300 es
 precision mediump float;
 in vec2 uv;
 out vec4 c;
 uniform sampler2D tex;
-uniform int writeRow;  // current ring buffer write row
-uniform int rows;      // texture height == time axis length
+uniform float scroll; // Float scroll position instead of int writeRow
+uniform int rows;      
 uniform float steep, midpoint;
-uniform int vert;      // 1 = vertical scroll
-uniform int p3;        // 1 = Display P3 available (boost saturation)
-uniform float weighting; // 0 = pink/tilt correction, 1 = equal-loudness (dB-A-like) correction
-uniform float mirror;   // 1 = scroll from far edge, 0 = scroll from near edge, 0.5 = split down the middle
+uniform int vert;      
+uniform int p3;        
+uniform float weighting; 
+uniform float mirror;   
 
-// HSL to RGB (compact, no branches)
-vec3 hsl(float h,float s,float l){
-  vec3 rgb=clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)-1.,0.,1.);
-  return l+s*(rgb-.5)*(1.-abs(2.*l-1.));
+vec3 hsl(float h, float s, float l){
+  vec3 rgb = clamp(abs(mod(h * 6. + vec3(0, 4, 2), 6.) - 3.) - 1., 0., 1.);
+  return l + s * (rgb - .5) * (1. - abs(2. * l - 1.));
 }
 
-// Compact A-weighting approximation (relative dB, ~0 near 2kHz, negative at bass/treble)
-// Cheap on GPU: a handful of muls + one sqrt + one log per fragment.
 float aWeightDb(float f){
-  float f2 = f*f;
-  float num = 148693636. * f2 * f2; // 12194^2
-  float den = (f2+424.36) * sqrt((f2+11599.29)*(f2+544496.41)) * (f2+148693636.);
-  return 20. * log(num/den) / log(10.) + 2.0;
+  float f2 = f * f;
+  float num = 148693636. * f2 * f2; 
+  float den = (f2 + 424.36) * sqrt((f2 + 11599.29) * (f2 + 544496.41)) * (f2 + 148693636.);
+  return 20. * log(num / den) / log(10.) + 2.0;
 }
 
 void main(){
-  // Texture layout: x=bands(freq), y=time(rows)
-  // Horizontal mode: screen.x=time, screen.y=freq
-  // Vertical mode:   screen.x=freq, screen.y=time
-  float freqUV = vert==1 ? uv.x : uv.y;
-  float screenT = vert==1 ? uv.y : uv.x; // raw screen-space time axis, 0..1
+  float freqUV = vert == 1 ? uv.x : uv.y;
+  float screenT = vert == 1 ? uv.y : uv.x;
 
-  // Mirror: 'mirror' places the entry point (newest data) on screen, 0..1.
-  // mirror=1: entry at the far edge, whole screen flows one way (default).
-  // mirror=0: entry at the near edge, whole screen flows the other way.
-  // 0<mirror<1: screen splits into two zones sized 'mirror' and '1 - mirror';
-  // each zone flows outward from the shared edge at 'mirror', like two
-  // mirrored streams — the edge is always where the newest data lands.
-  // Branchless: entirely step/mix/abs, no dynamic conditionals.
   float side = step(mirror, screenT);
   float zoneWidth = mix(mirror, 1.0 - mirror, side);
   float edgeDist = abs(screenT - mirror) / max(zoneWidth, 1e-5);
-  float timeUV = clamp(1.0 - edgeDist, 0.0, 1.0); // 0 = oldest (outer edge), 1 = newest (mirror edge)
+  float timeUV = clamp(1.0 - edgeDist, 0.0, 1.0);
 
-  // Ring buffer scroll: newest row is writeRow-1, oldest is writeRow
-  // We want oldest at timeUV=0, newest at timeUV=1 (mirror mapping above)
-  float ringOffset = float(writeRow) / float(rows);
+  // Smooth sub-pixel ring buffer scroll using float
+  float ringOffset = scroll / float(rows);
   float scrolled = mod(timeUV + ringOffset, 1.);
 
-  // Sample raw amplitude (0-1 from Uint8 texture)
   float val = texture(tex, vec2(freqUV, scrolled)).r;
 
-  // Pink noise correction: +3dB/octave (1/f compensation)
-  // Applied per-pixel: freqUV 0..1 maps to A0..C9
-  float refFreq = 440.; // A4 reference
-  float bandFreq = 27.5 * pow(2., freqUV * 111. / 12.); // A0 * 2^(semitones/12)
+  float refFreq = 440.; 
+  float bandFreq = 27.5 * pow(2., freqUV * 111. / 12.);
   float pinkBoost = 2. * log2(bandFreq / refFreq);
 
-  // Perceptual loudness weighting: blend spectral-tilt correction (source-centric)
-  // with an equal-loudness / dB-A-like correction (ear-centric): dims bands the
-  // ear is less sensitive to, so brightness tracks perceived loudness, not raw energy.
   float loudnessCorrection = mix(pinkBoost * 0.01, aWeightDb(bandFreq) * 0.002, weighting);
   float corrected = val + loudnessCorrection;
 
-  // Sigmoid contrast
-  float v = 1./(1.+exp(-steep*(corrected-midpoint)));
+  float v = 1. / (1. + exp(-steep * (corrected - midpoint)));
 
-  // Hue from freq position (one full rainbow per octave)
   float semitones = freqUV * 111.;
   float hue = semitones / 12.;
 
-  // Boost saturation for P3 wider gamut
-  float sat = v * (p3==1 ? 1.15 : 1.);
+  float sat = v * (p3 == 1 ? 1.15 : 1.);
   float light = v * 0.75;
 
   c = vec4(hsl(hue, sat, light) * step(.01, v), 1.);
@@ -122,13 +98,17 @@ export function useSpectrogram() {
   let canvas, gl, prog, tex, rowBuf
   let audioCtx, analyzer, micSource
   let fftData
-  let bandValues, bandBinLo, bandBinHi // typed arrays instead of objects
-  let bandRaw, bandSharp, bandSmooth, bandAlpha // cochlear-style processing buffers
+  let bandValues, bandBinLo, bandBinHi
+  let bandRaw, bandSharp, bandSmooth, bandAlpha
   let numBands = 0
   let animationId
-  let writeRow = 0   // current ring buffer write position
-  let texRows = 1    // texture height, updated on resize
-  let uloc = {}      // cached uniform locations
+
+  // Accumulator for fractional speed
+  let scrollPos = 0.0;
+  let lastWrittenRow = -1;
+
+  let texRows = 1
+  let uloc = {}
 
   const screen = ref()
   const canvasElement = ref()
@@ -147,7 +127,6 @@ export function useSpectrogram() {
 
   const { width, height } = useWindowSize()
 
-  // Compile shader — returns null and logs on error
   function mkShader(type, src) {
     const s = gl.createShader(type)
     gl.shaderSource(s, src)
@@ -165,7 +144,6 @@ export function useSpectrogram() {
     gl.linkProgram(prog)
     gl.useProgram(prog)
 
-    // Full-screen quad
     const buf = gl.createBuffer()
     gl.bindBuffer(gl.ARRAY_BUFFER, buf)
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW)
@@ -173,12 +151,11 @@ export function useSpectrogram() {
     gl.enableVertexAttribArray(loc)
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0)
 
-    // Cache all uniform locations once
-    for (const u of ['tex', 'writeRow', 'rows', 'steep', 'midpoint', 'vert', 'p3', 'weighting', 'mirror'])
+    // Updated uniform cache: replaced 'writeRow' with 'scroll'
+    for (const u of ['tex', 'scroll', 'rows', 'steep', 'midpoint', 'vert', 'p3', 'weighting', 'mirror'])
       uloc[u] = gl.getUniformLocation(prog, u)
 
     gl.uniform1i(uloc.tex, 0)
-    // Don't call initTex here — bands not generated yet
   }
 
   function initTex() {
@@ -188,15 +165,17 @@ export function useSpectrogram() {
     if (tex) gl.deleteTexture(tex)
     tex = gl.createTexture()
     gl.bindTexture(gl.TEXTURE_2D, tex)
-    // LUMINANCE/UNSIGNED_BYTE: universally supported, value encoded as 0-255
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, numBands, texRows, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, null)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE) // freq axis: clamp
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)         // time axis: wrap (ring buffer)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
 
-    rowBuf = new Uint8Array(numBands) // numBands is now a global variable
-    writeRow = 0
+    rowBuf = new Uint8Array(numBands)
+
+    // Reset accumulators when texture clears/resizes
+    scrollPos = 0.0;
+    lastWrittenRow = -1;
     if (bandSmooth) bandSmooth.fill(0)
   }
 
@@ -215,7 +194,6 @@ export function useSpectrogram() {
     video.value.srcObject = videostream
   })
 
-  // Musical range (A0 to C9)
   const MIN_NOTE = 21
   const MAX_NOTE = 132
   const BASE_FREQ = 440
@@ -226,10 +204,6 @@ export function useSpectrogram() {
   function midiToFreq(midi) { return BASE_FREQ * 2 ** ((midi - BASE_NOTE) / 12) }
   function sigmoid(value) { return 1 / (1 + Math.exp(-controls.steep * (value - controls.midpoint))); }
   function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x }
-  // Glasberg & Moore ERB (Equivalent Rectangular Bandwidth), in Hz — the
-  // auditory filter width of the cochlea at a given frequency. Nearly
-  // constant (~24Hz) in the bass, roughly proportional to freq in the treble —
-  // unlike a constant-Q musical filterbank, which is proportional everywhere.
   function erb(freq) { return 24.7 * (4.37 * freq / 1000 + 1) }
 
   function generateBands() {
@@ -244,19 +218,14 @@ export function useSpectrogram() {
         const centsOffset = (i / halfSub) * 50
         const freq = centerFreq * 2 ** (centsOffset / 1200)
 
-        // Constant-Q (musical) bandwidth: proportional to freq, same in every octave
         const centsWidth = 50 / halfSub
         const freqLoQ = freq * 2 ** (-centsWidth / 1200)
         const freqHiQ = freq * 2 ** (centsWidth / 1200)
 
-        // Auditory (ERB) bandwidth: cochlea's real filter width — nearly
-        // constant in Hz at low freq, wider than a semitone down there,
-        // narrower than a semitone (relatively) up high.
         const halfErb = erb(freq) / (2 * subBands)
         const freqLoErb = freq - halfErb
         const freqHiErb = freq + halfErb
 
-        // 'auditory' knob: 0 = pure musical/constant-Q, 1 = pure ERB auditory filter
         const a = controls.auditory
         const freqLo = freqLoQ + (freqLoErb - freqLoQ) * a
         const freqHi = freqHiQ + (freqHiErb - freqHiQ) * a
@@ -274,10 +243,6 @@ export function useSpectrogram() {
     bandSmooth = new Float32Array(numBands)
     bandAlpha = new Float32Array(numBands)
 
-    // Precompute per-band temporal-integration coefficients: the cochlea has
-    // high time resolution (fast update, large alpha) at high frequencies to
-    // catch transients, and high frequency resolution (slow update, small
-    // alpha) at low frequencies. Runs once per band-regen, not per frame.
     const logLo = Math.log2(20), logHi = Math.log2(8000)
     for (let i = 0; i < numBands; i++) {
       const t = clamp01((Math.log2(tempBands[i].freq) - logLo) / (logHi - logLo))
@@ -295,7 +260,6 @@ export function useSpectrogram() {
       }
     }
 
-    // Keep tempBands for barFrequencies (display only)
     if (!barFrequencies.value) barFrequencies.value = tempBands
   }
 
@@ -318,7 +282,7 @@ export function useSpectrogram() {
       fftData = new Float32Array(analyzer.frequencyBinCount)
 
       generateBands()
-      initTex() // now bands exist, safe to allocate texture
+      initTex()
       initiated.value = true
       video.value.play()
 
@@ -337,7 +301,6 @@ export function useSpectrogram() {
   function processFFT() {
     analyzer.getFloatFrequencyData(fftData)
 
-    // 1. Raw per-band linear amplitude (same as before)
     for (let i = 0; i < numBands; i++) {
       let sum = 0
       let count = 0
@@ -351,9 +314,6 @@ export function useSpectrogram() {
       bandRaw[i] = Math.max(0, Math.pow(10, (avgDb + 100) / 100 - 1))
     }
 
-    // 2. Lateral inhibition (on-center/off-surround), like adjacent hair
-    // cells suppressing each other on the basilar membrane — sharpens ridges
-    // between simultaneous partials instead of leaving them as a soft blob.
     const sharpen = controls.sharpen
     if (sharpen > 0) {
       for (let i = 0; i < numBands; i++) {
@@ -366,10 +326,6 @@ export function useSpectrogram() {
       bandSharp.set(bandRaw)
     }
 
-    // 3. Frequency-dependent temporal integration: bass bands are slow
-    // (long integration, like the cochlea's low-frequency response), treble
-    // bands are fast (short integration, catches transients/clicks).
-    // integration=0 reproduces the old instant/per-frame behavior exactly.
     const integ = controls.integration
     for (let i = 0; i < numBands; i++) {
       const a = integ > 0 ? (1 - integ) + integ * bandAlpha[i] : 1
@@ -386,10 +342,17 @@ export function useSpectrogram() {
 
     processFFT()
 
-    // Write one row per frame into ring buffer texture
-    // `speed` rows written at once for faster scroll
-    const speed = controls.speed
-    for (let s = 0; s < speed; s++) {
+    // 1. Accumulate fractional speed
+    scrollPos += controls.speed;
+    const currentRow = Math.floor(scrollPos);
+    let rowsToWrite = currentRow - lastWrittenRow;
+    lastWrittenRow = currentRow;
+
+    // Prevent massive loops if tab was inactive
+    rowsToWrite = Math.min(rowsToWrite, texRows);
+
+    // 2. Write rows to texture (if accumulator crossed 1.0)
+    for (let s = 0; s < rowsToWrite; s++) {
       for (let i = 0; i < numBands; i++) {
         rowBuf[i] = Math.min(255, Math.max(0, bandValues[i] * 255) | 0)
       }
@@ -397,22 +360,21 @@ export function useSpectrogram() {
       gl.bindTexture(gl.TEXTURE_2D, tex)
       gl.texSubImage2D(
         gl.TEXTURE_2D, 0,
-        0, writeRow,          // xoffset, yoffset
-        numBands, 1,          // width, height of update
+        0, (currentRow - rowsToWrite + s) % texRows,
+        numBands, 1,
         gl.LUMINANCE, gl.UNSIGNED_BYTE, rowBuf
       )
-      writeRow = (writeRow + 1) % texRows
     }
 
-    // Set uniforms and draw full-screen quad
-    gl.uniform1i(uloc.writeRow, writeRow)
-    gl.uniform1i(uloc.rows, texRows)
-    gl.uniform1f(uloc.steep, controls.steep)
-    gl.uniform1f(uloc.midpoint, controls.midpoint)
-    gl.uniform1i(uloc.vert, vertical.value ? 1 : 0)
-    gl.uniform1i(uloc.p3, window.matchMedia('(color-gamut: p3)').matches ? 1 : 0)
-    gl.uniform1f(uloc.weighting, controls.weighting)
-    gl.uniform1f(uloc.mirror, controls.offset)
+    // 3. Pass float position to shader for smooth sub-pixel interpolation
+    gl.uniform1f(uloc.scroll, scrollPos % texRows);
+    gl.uniform1i(uloc.rows, texRows);
+    gl.uniform1f(uloc.steep, controls.steep);
+    gl.uniform1f(uloc.midpoint, controls.midpoint);
+    gl.uniform1i(uloc.vert, vertical.value ? 1 : 0);
+    gl.uniform1i(uloc.p3, window.matchMedia('(color-gamut: p3)').matches ? 1 : 0);
+    gl.uniform1f(uloc.weighting, controls.weighting);
+    gl.uniform1f(uloc.mirror, controls.offset);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
 
@@ -422,66 +384,72 @@ export function useSpectrogram() {
   }
 
   const pics = reactive([])
-
   let offscreenCanvas, offscreenCtx
+  let recordingAccumulator = 0;
 
   const startRecording = () => {
     offscreenCanvas = document.createElement('canvas');
-    offscreenCanvas.width = controls.speed;
+    offscreenCanvas.width = Math.max(2, Math.ceil(controls.speed)); // Start with a small buffer
     offscreenCanvas.height = height.value;
     offscreenCtx = offscreenCanvas.getContext('2d');
     recording.value = Date.now();
-    recordedWidth.value = controls.speed;
+    recordedWidth.value = 0;
+    recordingAccumulator = 0;
   };
 
   const stopRecording = () => {
     recording.value = false;
+
+    // Crop canvas to exact final float width
+    const finalWidth = Math.ceil(recordedWidth.value);
+    if (offscreenCanvas.width !== finalWidth) {
+      const temp = document.createElement('canvas');
+      temp.width = finalWidth;
+      temp.height = offscreenCanvas.height;
+      temp.getContext('2d').drawImage(offscreenCanvas, 0, 0);
+      offscreenCanvas = temp;
+    }
+
     offscreenCanvas.toBlob((blob) => {
       pics.push(window.URL.createObjectURL(blob))
     }, 'image/png');
   };
 
-  let recTemp, recCtx
-
   const recordFrame = () => {
-    recTemp = recTemp || document.createElement('canvas')
-    recCtx = recCtx || recTemp.getContext('2d')
+    // Determine how many pixels to slice from WebGL canvas
+    const sliceWidth = Math.max(1, Math.round(controls.speed));
+    recordingAccumulator += controls.speed;
+    const newWidth = recordingAccumulator;
 
-    const newWidth = recordedWidth.value + controls.speed
+    // Canvas 2D automatically retains image when only width is increased.
+    // This is O(1) and fixes the laggy redraw logic.
+    if (offscreenCanvas.width < Math.ceil(newWidth) + sliceWidth) {
+      offscreenCanvas.width = Math.ceil(newWidth) + sliceWidth;
+    }
 
-    recTemp.width = newWidth
-    recTemp.height = offscreenCanvas.height
-    recCtx.drawImage(offscreenCanvas, 0, 0)
-    offscreenCanvas.width = newWidth
-    offscreenCtx.drawImage(recTemp, 0, 0)
+    const srcX = Math.max(0, Math.round(width.value - sliceWidth));
 
-    // Read from WebGL canvas, round to avoid subpixel gaps
-    const srcX = Math.round(width.value - controls.speed)
-    const srcW = Math.round(controls.speed)
-    const srcH = Math.round(height.value)
-    const dstX = Math.round(recordedWidth.value)
-
+    // Draw slice, scaling it to 'controls.speed' width for fractional speed recording
     offscreenCtx.drawImage(
       canvas,
-      srcX, 0, srcW, srcH,
-      dstX, 0, srcW, srcH
-    )
+      srcX, 0, sliceWidth, height.value,
+      recordedWidth.value, 0, controls.speed, height.value
+    );
 
-    recordedWidth.value = newWidth
+    recordedWidth.value = newWidth;
   };
 
   function clear() {
     if (gl) { gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT) }
-    if (tex) initTex() // reset ring buffer
+    if (tex) initTex()
   }
 
-  // Update parameters
   watch(() => controls.fftSize, (v) => {
     if (analyzer) {
       analyzer.fftSize = Math.pow(2, v)
       fftData = new Float32Array(analyzer.frequencyBinCount)
       generateBands()
-      initTex() // reinit texture since numBands unchanged but bin ranges changed
+      initTex()
     }
   })
 
@@ -490,10 +458,9 @@ export function useSpectrogram() {
   })
 
   watch(() => controls.auditory, () => {
-    if (analyzer) generateBands() // bin ranges depend on the constant-Q/ERB blend
+    if (analyzer) generateBands()
   })
 
-  // Initialize barFrequencies on first render
   watch(initiated, (v) => {
     if (v && !barFrequencies.value) barFrequencies.value = barFrequencies.value
   })
