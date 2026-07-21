@@ -24,7 +24,16 @@ const {
 
 import { useWakeLock } from '@vueuse/core'
 
-const { isSupported: isWakeLockSupported, request } = useWakeLock()
+
+function init() {
+  initiate();
+  try {
+    const { isSupported: isWakeLockSupported, request } = useWakeLock()
+    if (isWakeLockSupported.value) { request() }
+  } catch (e) { }
+}
+
+
 
 const { toggle, isSupported } = useFullscreen(screen)
 
@@ -62,11 +71,12 @@ template(v-if="initiated")
   .w-2px.h-full.absolute.backdrop-blur.z-100(inert :style="{ backgroundColor: colorFreq(frequency), opacity: 0.15, transform: `translate(${x}px,0)` }")
   .h-2px.w-full.absolute.backdrop-blur.z-100(inert :style="{ backgroundColor: colorFreq(frequency), opacity: 0.15, transform: `translate(0,${y}px)` }")
   .h-4px.w-4px.absolute.z-150.rounded-4px(inert :style="{ backgroundColor: colorFreq(frequency), transform: `translate(${x - 1}px,${y - 1}px)` }")
-  .z-140.text-white.absolute.text-right.w-110px.p-2.backdrop-blur-lg.bg-dark-100.bg-op-20.transition-opacity(inert :style="{ color: colorFreq(frequency), transform: `translate(${x - 110}px,${y - 65}px)` }") 
+  .z-440.text-white.absolute.text-right.w-110px.p-2.backdrop-blur-lg.bg-dark-100.bg-op-20.transition-opacity(inert :style="{ color: colorFreq(frequency), transform: `translate(${x - 110}px,${y - 65}px)` }") 
     .font-bold.text-xl.flex(:style="{ opacity: Math.round((freqPitch(frequency) - Math.floor(freqPitch(frequency))) * 10) % 10 > 0 ? .7 : 1, }") 
-      .p-0 {{ notes[(Math.round(freqPitch(frequency) - .2) % 12 + 12) % 12] }}{{ Math.floor((Math.round(freqPitch(frequency) - .2) - 3) / 12) + 4 }}
       .flex-1
-      .p-0.op-80 {{ Math.round((freqPitch(frequency) - Math.floor(freqPitch(frequency))) * 10) % 10 > 0 ? '~' : '' }} 
+      .p-0 {{ notes[(Math.round(freqPitch(frequency) - .2) % 12 + 12) % 12] }}{{ Math.floor((Math.round(freqPitch(frequency) - .2) - 3) / 12) + 4 }}
+
+
     .p-0 {{ frequency.toFixed(1) }} Hz  
 
 .flex.flex-col.justify-center.bg-black.relative.w-full.items-center
@@ -80,7 +90,7 @@ template(v-if="initiated")
         .font-bold.text-3xl.op-70 Chromatone 
       h1.text-6xl Spectrogram
       h2.text-xl Visual audio feedback instrument
-    form(@submit.prevent="initiate(); isWakeLockSupported && request()")
+    form(@submit.prevent="init()")
       button.m-2.text-2xl.border-1.p-4.rounded-xl(
         title="Press here to start" 
         autofocus

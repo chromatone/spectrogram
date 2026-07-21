@@ -1,7 +1,7 @@
 <script setup>
 import { reactive, ref, computed, watch } from 'vue'
 import { useGesture } from '@vueuse/gesture'
-import { useClamp } from '@vueuse/math'
+import { useClamp } from '../composables/useSpectrogram.js'
 
 const props = defineProps({
   max: { type: Number, default: 100 },

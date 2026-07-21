@@ -1,29 +1,19 @@
 
-import { ref, onMounted, watch, reactive } from 'vue'
-import { useStorage, useWindowSize } from '@vueuse/core'
-import { useClamp } from '@vueuse/math';
+import { ref, isRef, onMounted, onUnmounted, computed, watch, reactive } from 'vue'
 
 const params = {
-  fftSize: { default: 13, min: 12, max: 14, step: 1, fixed: 0 },
-  smooth: { default: 0, min: 0, max: 1, step: 0.01, fixed: 1 },
-  // Changed speed to allow fractional values (down to 0.1)
-  speed: { default: 1, min: 0.1, max: 4, step: 0.1, fixed: 1 },
   midpoint: { default: 0.3, min: 0, max: 1, step: 0.0001, fixed: 2 },
   steep: { default: 20, min: 3, max: 40, step: 0.001, fixed: 1 },
+  speed: { default: 1, min: 0.1, max: 4, step: 0.1, fixed: 1 },
+  fftSize: { default: 13, min: 12, max: 14, step: 1, fixed: 0 },
+  smooth: { default: 0, min: 0, max: 1, step: 0.01, fixed: 1 },
+  offset: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2 },
+  // Changed speed to allow fractional values (down to 0.1)
   weighting: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },
   auditory: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },
   integration: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },
   sharpen: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },
-  offset: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2 }
-}
 
-function useControls(paramsList) {
-  const controls = reactive({})
-  for (let param in paramsList) {
-    let p = paramsList[param]
-    controls[param] = useClamp(useStorage(param, p.default), p.min, p.max)
-  }
-  return controls
 }
 
 // WebGL shaders
@@ -33,65 +23,92 @@ out vec2 uv;
 void main(){ uv = p * .5 + .5; gl_Position = vec4(p, 0, 1); }
 `
 
-// Updated Fragment shader:
-// Uses float 'scroll' instead of int 'writeRow' to allow fractional/sub-pixel smooth scrolling
 const FRAG = `#version 300 es
 precision mediump float;
 in vec2 uv;
 out vec4 c;
 uniform sampler2D tex;
-uniform float scroll; // Float scroll position instead of int writeRow
+uniform float scroll; 
 uniform int rows;      
 uniform float steep, midpoint;
 uniform int vert;      
 uniform int p3;        
-uniform float weighting; 
-uniform float mirror;   
+uniform float mirror;
+uniform vec2 texelSize; 
 
-vec3 hsl(float h, float s, float l){
-  vec3 rgb = clamp(abs(mod(h * 6. + vec3(0, 4, 2), 6.) - 3.) - 1., 0., 1.);
-  return l + s * (rgb - .5) * (1. - abs(2. * l - 1.));
-}
-
-float aWeightDb(float f){
-  float f2 = f * f;
-  float num = 148693636. * f2 * f2; 
-  float den = (f2 + 424.36) * sqrt((f2 + 11599.29) * (f2 + 544496.41)) * (f2 + 148693636.);
-  return 20. * log(num / den) / log(10.) + 2.0;
+vec3 hsl(float h,float s,float l){
+  vec3 rgb=clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)-1.,0.,1.);
+  return l+s*(rgb-.5)*(1.-abs(2.*l-1.));
 }
 
 void main(){
-  float freqUV = vert == 1 ? uv.x : uv.y;
-  float screenT = vert == 1 ? uv.y : uv.x;
+  float freqUV = vert==1 ? uv.x : uv.y;
+  float screenT = vert==1 ? uv.y : uv.x;
 
   float side = step(mirror, screenT);
   float zoneWidth = mix(mirror, 1.0 - mirror, side);
   float edgeDist = abs(screenT - mirror) / max(zoneWidth, 1e-5);
-  float timeUV = clamp(1.0 - edgeDist, 0.0, 1.0);
+  float timeUV = clamp(1.0 - edgeDist, 0.0, 1.0); 
 
-  // Smooth sub-pixel ring buffer scroll using float
   float ringOffset = scroll / float(rows);
   float scrolled = mod(timeUV + ringOffset, 1.);
 
-  float val = texture(tex, vec2(freqUV, scrolled)).r;
+  vec2 tc = vec2(freqUV, scrolled);
+  
+  // --- Softer 5-Tap Unsharp Mask ---
+  // Prevents the "coarse static" look while keeping harmonics crisp
+  float center = texture(tex, tc).r;
+  float left   = texture(tex, tc - vec2(texelSize.x, 0.0)).r;
+  float right  = texture(tex, tc + vec2(texelSize.x, 0.0)).r;
+  float down   = texture(tex, tc - vec2(0.0, texelSize.y)).r;
+  float up     = texture(tex, tc + vec2(0.0, texelSize.y)).r;
+  
+  float sharp = 0.6; 
+  float val = center * (1.0 + 4.0 * sharp) - (left + right + down + up) * sharp;
+  val = clamp(val, 0.0, 1.0);
 
-  float refFreq = 440.; 
+  // --- Unified Perceptual Contour (Operating in 0..1 dB space) ---
   float bandFreq = 27.5 * pow(2., freqUV * 111. / 12.);
-  float pinkBoost = 2. * log2(bandFreq / refFreq);
+  
+  // 1. Gentle Pre-emphasis: +3dB/oct above 300Hz. 
+  // In our 0..1 scale (100dB total), 3dB = 0.03.
+  float octaves = max(0.0, log2(bandFreq / 300.0));
+  float preEmph = octaves * 0.03; 
+  
+  // 2. Subtle Formant Lift: Additive offset for 1-4kHz vocal/energy bands
+  float formantLift = smoothstep(0.3, 0.5, freqUV) * smoothstep(0.9, 0.5, freqUV) * 0.06;
+  
+  // 3. High Roll-off: Attenuates visual hiss at extreme highs
+  float highRollOff = smoothstep(0.85, 1.0, freqUV) * -0.15;
+  
+  float corrected = val + preEmph + formantLift + highRollOff;
+  corrected = clamp(corrected, 0.0, 1.0);
 
-  float loudnessCorrection = mix(pinkBoost * 0.01, aWeightDb(bandFreq) * 0.002, weighting);
-  float corrected = val + loudnessCorrection;
+  // Sigmoid contrast
+  float v = 1./(1.+exp(-steep*(corrected-midpoint)));
 
-  float v = 1. / (1. + exp(-steep * (corrected - midpoint)));
+  // --- Topographic Isobars ---
+  v = v - fract(v * 16.0) * 0.025;
 
   float semitones = freqUV * 111.;
   float hue = semitones / 12.;
 
-  float sat = v * (p3 == 1 ? 1.15 : 1.);
-  float light = v * 0.75;
+  // 1. Capped saturation (prevents neon blowouts)
+  float sat = clamp(v * 1.1, 0.0, 0.9) * (p3==1 ? 1.1 : 1.0);
 
-  c = vec4(hsl(hue, sat, light) * step(.01, v), 1.);
+  // 2. Gamma Lightness Curve
+  // Pow(v, 0.8) lifts the mids/quieter sounds slightly out of the black,
+  // while preventing the loudest sounds from turning into pure white.
+  float light = pow(v, 0.8) * 0.75;
+
+  // 3. Smooth Noise Gate
+  // A hard step(.01, v) causes harsh, flickering edges at the noise floor.
+  // smoothstep gracefully fades the noise floor into true black.
+  float gate = smoothstep(0.01, 0.06, v);
+
+  c = vec4(hsl(hue, sat, light) * gate, 1.);
 }
+   
 `
 
 export function useSpectrogram() {
@@ -100,6 +117,7 @@ export function useSpectrogram() {
   let fftData
   let bandValues, bandBinLo, bandBinHi
   let bandRaw, bandSharp, bandSmooth, bandAlpha
+  let prevBandValues = new Float32Array(1024) // Add this for high-speed interpolation
   let numBands = 0
   let animationId
 
@@ -152,7 +170,8 @@ export function useSpectrogram() {
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0)
 
     // Updated uniform cache: replaced 'writeRow' with 'scroll'
-    for (const u of ['tex', 'scroll', 'rows', 'steep', 'midpoint', 'vert', 'p3', 'weighting', 'mirror'])
+    // Updated uniform cache: added 'texelSize'
+    for (const u of ['tex', 'scroll', 'rows', 'steep', 'midpoint', 'vert', 'p3', 'mirror', 'texelSize'])
       uloc[u] = gl.getUniformLocation(prog, u)
 
     gl.uniform1i(uloc.tex, 0)
@@ -211,6 +230,7 @@ export function useSpectrogram() {
     const halfSub = (subBands - 1) / 2
     const tempBands = []
 
+
     for (let note = MIN_NOTE; note <= MAX_NOTE; note++) {
       const centerFreq = midiToFreq(note)
 
@@ -242,11 +262,13 @@ export function useSpectrogram() {
     bandSharp = new Float32Array(numBands)
     bandSmooth = new Float32Array(numBands)
     bandAlpha = new Float32Array(numBands)
+    prevBandValues = new Float32Array(numBands) // Add this
 
     const logLo = Math.log2(20), logHi = Math.log2(8000)
     for (let i = 0; i < numBands; i++) {
       const t = clamp01((Math.log2(tempBands[i].freq) - logLo) / (logHi - logLo))
-      bandAlpha[i] = 0.08 + t * 0.82
+      // Tighter range: bass is smooth, treble is responsive but not speckled
+      bandAlpha[i] = 0.2 + t * 0.5
     }
 
     if (analyzer) {
@@ -301,19 +323,17 @@ export function useSpectrogram() {
   function processFFT() {
     analyzer.getFloatFrequencyData(fftData)
 
+    // 1. Raw per-band dB amplitude (Peak picking, mapped to 0..1 perceptual scale)
     for (let i = 0; i < numBands; i++) {
-      let sum = 0
-      let count = 0
-
+      let maxDb = -100
       for (let j = bandBinLo[i]; j <= bandBinHi[i]; j++) {
-        sum += fftData[j]
-        count++
+        if (fftData[j] > maxDb) maxDb = fftData[j]
       }
-
-      const avgDb = count > 0 ? sum / count : -100
-      bandRaw[i] = Math.max(0, Math.pow(10, (avgDb + 100) / 100 - 1))
+      // Map -100dB..0dB directly to 0.0..1.0
+      bandRaw[i] = Math.max(0, Math.min(1, (maxDb + 100) / 100))
     }
 
+    // 2. Lateral inhibition (Works perfectly on dB scale)
     const sharpen = controls.sharpen
     if (sharpen > 0) {
       for (let i = 0; i < numBands; i++) {
@@ -326,6 +346,7 @@ export function useSpectrogram() {
       bandSharp.set(bandRaw)
     }
 
+    // 3. Frequency-dependent temporal integration
     const integ = controls.integration
     for (let i = 0; i < numBands; i++) {
       const a = integ > 0 ? (1 - integ) + integ * bandAlpha[i] : 1
@@ -340,21 +361,25 @@ export function useSpectrogram() {
       return
     }
 
+    // 1. Save previous frame's data BEFORE processing the new one
+    prevBandValues.set(bandValues)
     processFFT()
 
-    // 1. Accumulate fractional speed
+    // 2. Accumulate fractional speed
     scrollPos += controls.speed;
     const currentRow = Math.floor(scrollPos);
     let rowsToWrite = currentRow - lastWrittenRow;
     lastWrittenRow = currentRow;
-
-    // Prevent massive loops if tab was inactive
     rowsToWrite = Math.min(rowsToWrite, texRows);
 
-    // 2. Write rows to texture (if accumulator crossed 1.0)
+    // 3. Write rows with temporal interpolation to prevent stepping/smudging
     for (let s = 0; s < rowsToWrite; s++) {
+      const t = rowsToWrite > 1 ? (s + 1) / rowsToWrite : 1.0;
+
       for (let i = 0; i < numBands; i++) {
-        rowBuf[i] = Math.min(255, Math.max(0, bandValues[i] * 255) | 0)
+        // Interpolate between previous frame and current frame
+        const lerpVal = prevBandValues[i] + (bandValues[i] - prevBandValues[i]) * t;
+        rowBuf[i] = Math.min(255, Math.max(0, lerpVal * 255) | 0)
       }
 
       gl.bindTexture(gl.TEXTURE_2D, tex)
@@ -366,7 +391,7 @@ export function useSpectrogram() {
       )
     }
 
-    // 3. Pass float position to shader for smooth sub-pixel interpolation
+    // 4. Set uniforms and draw
     gl.uniform1f(uloc.scroll, scrollPos % texRows);
     gl.uniform1i(uloc.rows, texRows);
     gl.uniform1f(uloc.steep, controls.steep);
@@ -375,6 +400,9 @@ export function useSpectrogram() {
     gl.uniform1i(uloc.p3, window.matchMedia('(color-gamut: p3)').matches ? 1 : 0);
     gl.uniform1f(uloc.weighting, controls.weighting);
     gl.uniform1f(uloc.mirror, controls.offset);
+
+    // Tell the shader the exact size of one texture pixel for the unsharp mask
+    gl.uniform2f(uloc.texelSize, 1.0 / numBands, 1.0 / texRows);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
 
@@ -468,4 +496,32 @@ export function useSpectrogram() {
   return {
     initiate, startRecording, stopRecording, pics, colorFreq, clear, screen, canvasElement, video, paused, recording, recordedWidth, controls, params, initiated, vertical, width, height, barFrequencies
   }
+}
+
+function useControls(paramsList) {
+  const controls = reactive({})
+  for (let param in paramsList) {
+    let p = paramsList[param]
+    controls[param] = useClamp(useStorage(param, p.default), p.min, p.max)
+  }
+  return controls
+}
+
+function useStorage(key, init) {
+  const val = ref(localStorage.getItem(key) ? JSON.parse(localStorage.getItem(key)) : init)
+  return watch(val, v => localStorage.setItem(key, JSON.stringify(v)), { deep: true }), val
+}
+
+function useWindowSize() {
+  const width = ref(innerWidth), height = ref(innerHeight)
+  const update = () => (width.value = innerWidth, height.value = innerHeight)
+  return onMounted(() => window.addEventListener('resize', update)),
+    onUnmounted(() => window.removeEventListener('resize', update)),
+    { width, height }
+}
+
+export function useClamp(v, min, max) {
+  const refVal = isRef(v) ? v : ref(v)
+  const clamp = n => Math.min(Math.max(n, min), max)
+  return computed({ get: () => clamp(refVal.value), set: val => refVal.value = clamp(val) })
 }
