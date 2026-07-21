@@ -12,7 +12,8 @@ const params = {
   weighting: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },   // 0 = pink-noise/spectral-tilt correction, 1 = equal-loudness (dB-A-like) correction
   auditory: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },    // 0 = constant-Q musical (cents-wide) bands, 1 = ERB auditory-filter bands
   integration: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true }, // amount of cochlear-style frequency-dependent temporal smoothing
-  sharpen: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true }      // lateral-inhibition style spectral contrast enhancement
+  sharpen: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },     // lateral-inhibition style spectral contrast enhancement
+  offset: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2 }       // 1 = scroll from far edge, 0 = scroll from near edge, 0.5 = mirrored from center
 }
 
 function useControls(paramsList) {
@@ -46,6 +47,7 @@ uniform float steep, midpoint;
 uniform int vert;      // 1 = vertical scroll
 uniform int p3;        // 1 = Display P3 available (boost saturation)
 uniform float weighting; // 0 = pink/tilt correction, 1 = equal-loudness (dB-A-like) correction
+uniform float mirror;   // 1 = scroll from far edge, 0 = scroll from near edge, 0.5 = split down the middle
 
 // HSL to RGB (compact, no branches)
 vec3 hsl(float h,float s,float l){
@@ -67,12 +69,24 @@ void main(){
   // Horizontal mode: screen.x=time, screen.y=freq
   // Vertical mode:   screen.x=freq, screen.y=time
   float freqUV = vert==1 ? uv.x : uv.y;
-  float timeUV = vert==1 ? uv.y : uv.x;
+  float screenT = vert==1 ? uv.y : uv.x; // raw screen-space time axis, 0..1
+
+  // Mirror: 'mirror' places the entry point (newest data) on screen, 0..1.
+  // mirror=1: entry at the far edge, whole screen flows one way (default).
+  // mirror=0: entry at the near edge, whole screen flows the other way.
+  // 0<mirror<1: screen splits into two zones sized 'mirror' and '1 - mirror';
+  // each zone flows outward from the shared edge at 'mirror', like two
+  // mirrored streams — the edge is always where the newest data lands.
+  // Branchless: entirely step/mix/abs, no dynamic conditionals.
+  float side = step(mirror, screenT);
+  float zoneWidth = mix(mirror, 1.0 - mirror, side);
+  float edgeDist = abs(screenT - mirror) / max(zoneWidth, 1e-5);
+  float timeUV = clamp(1.0 - edgeDist, 0.0, 1.0); // 0 = oldest (outer edge), 1 = newest (mirror edge)
 
   // Ring buffer scroll: newest row is writeRow-1, oldest is writeRow
-  // We want oldest at screen left/top (timeUV=0), newest at right/bottom (timeUV=1)
-  float offset = float(writeRow) / float(rows);
-  float scrolled = mod(timeUV + offset, 1.);
+  // We want oldest at timeUV=0, newest at timeUV=1 (mirror mapping above)
+  float ringOffset = float(writeRow) / float(rows);
+  float scrolled = mod(timeUV + ringOffset, 1.);
 
   // Sample raw amplitude (0-1 from Uint8 texture)
   float val = texture(tex, vec2(freqUV, scrolled)).r;
@@ -160,7 +174,7 @@ export function useSpectrogram() {
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0)
 
     // Cache all uniform locations once
-    for (const u of ['tex', 'writeRow', 'rows', 'steep', 'midpoint', 'vert', 'p3', 'weighting'])
+    for (const u of ['tex', 'writeRow', 'rows', 'steep', 'midpoint', 'vert', 'p3', 'weighting', 'mirror'])
       uloc[u] = gl.getUniformLocation(prog, u)
 
     gl.uniform1i(uloc.tex, 0)
@@ -398,6 +412,7 @@ export function useSpectrogram() {
     gl.uniform1i(uloc.vert, vertical.value ? 1 : 0)
     gl.uniform1i(uloc.p3, window.matchMedia('(color-gamut: p3)').matches ? 1 : 0)
     gl.uniform1f(uloc.weighting, controls.weighting)
+    gl.uniform1f(uloc.mirror, controls.offset)
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
 
@@ -487,5 +502,3 @@ export function useSpectrogram() {
     initiate, startRecording, stopRecording, pics, colorFreq, clear, screen, canvasElement, video, paused, recording, recordedWidth, controls, params, initiated, vertical, width, height, barFrequencies
   }
 }
-
-
