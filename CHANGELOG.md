@@ -1,3 +1,24 @@
+## v0.6.1 (2026-07-21) - Praat-style Definition & Coherent Perceptual Pipeline
+
+### Added
+- **Fractional Speed Scrolling:** Support for speeds between 0.1x and 4x. Uses a float accumulator in JS and a sub-pixel `scroll` uniform in the GPU to smoothly stretch or compress time without jitter.
+- **Temporal Frame Interpolation:** When `speed > 1`, intermediate GPU rows are linearly interpolated between the previous and current audio frames, eliminating the blocky "stepping" artifact common in fast spectrograms.
+- **5-Tap Unsharp Masking:** Added `texelSize` uniform and a branchless 5-tap edge enhancement in the fragment shader to extract hyper-crisp harmonic ridges.
+- **Topographic Isobars:** Subtle contour lines generated via `fract()` in the shader, mimicking scientific topographical maps to visually flatten smudges.
+- **Gamma Lightness & Smooth Noise Gate:** Replaced harsh threshold cuts with a `smoothstep` noise gate and applied a `0.8` gamma curve to lift quiet details out of the black without oversaturating peaks.
+
+### Changed
+- **Perceptual dB Pipeline:** Switched the entire audio pipeline from linear amplitude to a logarithmic 0..1 dB scale. Quieter harmonics are now preserved without blowing out the highs.
+- **Peak-Picking Spectral Gathering:** `processFFT` now takes the `Math.max` dB value per band instead of averaging, preserving narrow formants and preventing spectral smearing.
+- **Unified Perceptual Contour:** Replaced the toggled A-weighting/pink-noise offsets with a built-in physiological contour (+3dB pre-emphasis >300Hz, formant lift, high roll-off) that safely balances the spectrum without crushing bass fundamentals.
+- **Tighter Temporal Smoothing:** Narrowed the cochlear integration `bandAlpha` range (0.2 to 0.5) to prevent high-frequency "static speckling" while maintaining transient response.
+- **Recording Performance:** Heavily optimized the `recordFrame` function to stop recreating the offscreen canvas every frame, fixing recording lag.
+
+### Removed
+- **Weighting Control:** Removed the `weighting` parameter and uniform. The system now operates as a single, coherent perceptual model without needing user intervention.
+- **A-weighting Approximation:** Removed the complex `aWeightDb` GPU function in favor of the cheaper, more coherent Unified Perceptual Contour.
+
+
 ## v.0.6.0 (2026-07-20) 
 
 Added four new knobs (hidden as they are all super-viable in our context to be on), all cheap (same order of cost as what you already had — a handful of scalar ops per band or per fragment, no new textures or passes):

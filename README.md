@@ -2,41 +2,43 @@
 
 ![Colorized spectrogram](https://raw.githubusercontent.com/chromatone/spectrogram/refs/heads/main/public/spectrogram.png)
 
-## Real-time musical spectrogram for your browser
+## Real-time musical cochleagram for your browser
 
-A zero-dependency, scientifically-grounded audio visualization tool built for musicians, researchers, and audio engineers. Displays audio as a colorized 12-TET (12-tone equal temperament) spectrogram with perceptually accurate frequency representation.
+A zero-dependency, scientifically-grounded audio visualization tool built for musicians, researchers, and audio engineers. It bridges the gap between musical analysis (12-TET) and auditory perception (cochlear ERB bands), rendered as a highly crisp, colorized real-time spectrogram.
 
 **Features:**
-- **12-TET frequency mapping** — Musical notes (A0 to C9) mapped to exact semitone bands
-- **Pink noise correction** — 2dB/octave compensation in GPU shader for perceptually flat display
-- **WebGL2 rendering** — GPU-accelerated ring buffer texture for smooth, high-performance visualization
-- **Display P3 support** — Wider color gamut detection with saturation boost on supported displays
-- **High-resolution analysis** — Configurable FFT size (4096-16384) for precise frequency resolution
-- **Signal-to-noise control** — Sigmoid-based threshold and steepness adjustments
-- **Recording & capture** — High-quality video recording (VP9/Opus or H.264/AAC) and screenshot capabilities
-- **PWA support** — Install as a standalone app, works offline
-- **Zero external audio dependencies** — Pure Web Audio API implementation
+- **Cochlear/Musical Hybrid Bands** — Blends Constant-Q musical bands with Equivalent Rectangular Bandwidth (ERB) auditory filters, spanning A0 to C9.
+- **Perceptual dB Pipeline** — Peak-picking FFT gathering and a unified perceptual loudness contour (+3dB pre-emphasis, formant lift, high roll-off) operating in logarithmic dB space.
+- **Lateral Inhibition** — On-center/off-surround spectral sharpening mimics basilar membrane hair cells, separating overlapping harmonics.
+- **Fractional Smooth Scrolling** — GPU sub-pixel interpolation and JS temporal frame interpolation allow speeds from 0.1x to 4x without smudging or stepping.
+- **Topographic Isobars** — Algorithmic contour lines and a 5-tap unsharp mask in the WebGL2 fragment shader provide hyper-crisp, "Praat-style" visual definition.
+- **Display P3 support** — Wider color gamut detection with saturation boost on supported displays.
+- **Recording & capture** — High-quality video recording (VP9/Opus or H.264/AAC) and screenshot capabilities with seamless fractional-width handling.
+- **PWA support** — Install as a standalone app, works offline.
+- **Zero external audio dependencies** — Pure Web Audio API implementation.
 
 ## How it works
 
-The spectrogram uses the Web Audio API's `AnalyserNode` with WebGL2-accelerated rendering:
+The spectrogram uses the Web Audio API's `AnalyserNode` feeding a highly optimized WebGL2 ring buffer:
 
-1. **FFT analysis** — Raw frequency data captured via `getFloatFrequencyData()`
-2. **12-TET band integration** — FFT bins summed into musical semitone bands (10 sub-bands per semitone)
-3. **Texture upload** — Band values written to a ring buffer texture (LUMINANCE/UNSIGNED_BYTE)
-4. **GPU shader processing** — Pink noise correction (2dB/octave), sigmoid contrast, and HSL color mapping in fragment shader
-5. **Ring buffer scrolling** — Seamless scrolling via texture UV offset with WRAP_T=REPEAT
-6. **Display P3 detection** — Saturation boost applied when wide gamut display is available
+1. **FFT analysis** — Raw frequency data captured via `getFloatFrequencyData()`.
+2. **Hybrid Band Gathering** — FFT bins are peak-picked into 10 sub-bands per semitone, blended between musical Constant-Q and cochlear ERB widths. Data is mapped to a 0..1 perceptual dB scale.
+3. **Cochlear Processing** — Lateral inhibition (spectral sharpening) and frequency-dependent temporal integration (fast treble, slow bass) are applied per frame.
+4. **Texture upload** — Band values are linearly interpolated between frames (if speed > 1) and written to a ring buffer texture.
+5. **GPU Shader Processing** — A 5-tap unsharp mask extracts edges. A unified perceptual contour balances the spectrum. Sigmoid contrast, topographic isobars, gamma lightness, and HSL color mapping finalize the image.
+6. **Ring buffer scrolling** — Seamless sub-pixel scrolling via float texture UV offset with `WRAP_T=REPEAT`.
 
-The pink noise correction ensures that natural/musical signals (which typically follow a 1/f spectrum) appear perceptually flat across the frequency range. All per-pixel processing is GPU-bound for maximum performance.
+All heavy lifting is split between optimized typed-array math in JS and branchless math in the GPU fragment shader, ensuring maximum performance and scientific accuracy.
 
 ## Controls
 
-- **FFT Size** — 12-14 (4096-16384) — Higher values improve low-frequency resolution
-- **Smooth** — 0-1 — Temporal smoothing of the analyzer
-- **Speed** — 1-4 — Scrolling speed of the spectrogram
-- **Midpoint** — 0-1 — Sigmoid threshold for signal visibility
-- **Steep** — 3-30 — Sigmoid steepness for noise floor control
+- **FFT Size** — 12-14 (4096-16384) — Higher values improve low-frequency resolution.
+- **Smooth** — 0-1 — Temporal smoothing of the analyzer.
+- **Speed** — 0.1-4 — Scrolling speed of the spectrogram. Fractional values stretch time; high speeds use temporal interpolation to prevent smearing.
+- **Midpoint** — 0-1 — Sigmoid threshold for signal visibility.
+- **Steep** — 3-40 — Sigmoid steepness for noise floor control.
+
+*(Hidden advanced controls include `auditory` filter blend, `integration` time constants, and `sharpen` lateral inhibition amounts).*
 
 ## Tech Stack
 
@@ -44,6 +46,7 @@ The pink noise correction ensures that natural/musical signals (which typically 
 - **Vite** — Build tool and dev server
 - **UnoCSS** — Utility-first CSS
 - **Web Audio API** — Native browser audio processing (no external audio libraries)
+- **WebGL2** — GPU-accelerated rendering and custom fragment shaders
 
 ## Installation
 
@@ -66,7 +69,7 @@ pnpm build
 
 1. Open the app in a modern browser
 2. Grant microphone access when prompted
-3. Adjust controls to fine-tune the visualization
+3. Adjust controls to fine-tune the visualization (midpoint ~0.25 and steep ~40 are great starting points)
 4. Use the camera button to capture screenshots
 5. Use the video button to record the spectrogram
 
@@ -75,7 +78,7 @@ pnpm build
 - **A0** — 27.5 Hz (lowest piano key)
 - **C9** — 15,870 Hz (highest piano key + 1 octave)
 
-The spectrogram covers the full piano range plus one octave above, suitable for most musical analysis.
+The spectrogram covers the full piano range plus one octave above, suitable for most musical and voice analysis.
 
 ## License
 
