@@ -82,32 +82,28 @@ template(v-if="initiated")
 .flex.flex-col.justify-center.bg-black.relative.w-full.items-center
   .text-center.absolute.m-auto.top-0.w-full.h-full.text-white.flex.flex-col.items-center.justify-center.gap-4.p-4.bg-stone-800(v-if="!initiated") 
 
-    .flex-1
-
-    .flex.flex-col.items-center.gap-2
-      a.m-4.flex.flex-col.items-center.gap-1(href="https://chromatone.center" target="_blank")
+    .flex.flex-col.items-center.gap-4
+      a.m-4.flex.flex-col.items-center.gap-1.mt-16(href="https://chromatone.center" target="_blank")
         img(src="/logo.svg" width="80px" height="80px")
-        .font-bold.text-3xl.op-70 Chromatone 
-      h1.text-6xl Spectrogram
-      h2.text-xl Visual audio feedback instrument
-    form(@submit.prevent="init()")
-      button.m-2.text-2xl.border-1.p-4.rounded-xl(
+        .text-2xl.op-70 Chromatone 
+      h1.text-5xl.font-bold Spectrogram
+      h2.text-xl Audio-visual feedback instrument
+    form.flex-auto.items-center.flex(@submit.prevent="init()")
+      button.font-bold.m-4.text-2xl.border-4.p-4.rounded-xl(
         title="Press here to start" 
         autofocus
         aria-label="Start button"
         type="submit") START
-    .flex-1
-    .max-w-40ch.flex.flex-col.gap-1
-      h3.text-lg Portable time-frequency analysis tool
-      p.text-sm 240 bands of distinct frequencies being extracted with FFT from audio input signal and displayed in colors matching pitch class.
-      p.op-80.text-xs A is red, A#/Bb is orange, B is yellow, C is lime, C#/Dd is green, D is mint, D#/Eb is cyan, E is azure, F is blue, F#/Gb is violet, G is magenta and G#/Ab is rose. 
+    .max-w-40ch.flex.flex-col.gap-1 
+      h3.text-lg Real-time musical cochleagram 
+      p.text-sm Pitch-accurate colorized auditory bands are extracted from microphone input using a hybrid cochlear and 12-TET musical filterbank and rendered on the GPU with scientific clarity. 
 
     .flex.items-center.gap-2
-      a.flex.gap-2.p-2.m-2.border-1.rounded-lg(href="https://github.com/chromatone/spectrogram" target="_blank")
-        .i-la-github
-        .p-0 Open Source
-      .flex.gap-1
+      a.flex.gap-1.border-1.p-1.rounded-lg.items-center(href="https://github.com/chromatone/spectrogram" target="_blank")
+        .i-la-github.text-xl
         .p-0  v.{{ version }} 
+      .flex.gap-1
+        
         .p-0 by
         a.underline(href="https://github.com/davay42" target="_blank") davay42 
         .p-0.op-50 MIT {{ year }}
