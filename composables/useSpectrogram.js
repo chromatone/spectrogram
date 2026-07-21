@@ -417,25 +417,30 @@ export function useSpectrogram() {
 
   const startRecording = () => {
     offscreenCanvas = document.createElement('canvas');
-    offscreenCanvas.width = Math.max(2, Math.ceil(controls.speed)); // Start with a small buffer
-    offscreenCanvas.height = height.value;
+    offscreenCanvas.width = 2000; // Start with a buffer, it will resize if needed
+    offscreenCanvas.height = vertical.value ? width.value : height.value;
     offscreenCtx = offscreenCanvas.getContext('2d');
+    offscreenCtx.imageSmoothingEnabled = false; // Prevent AA on pixel edges
     recording.value = Date.now();
-    recordedWidth.value = 0;
-    recordingAccumulator = 0;
+    recordedWidth.value = 0; // Now strictly an integer (pixels)
   };
 
   const stopRecording = () => {
     recording.value = false;
 
-    // Crop canvas to exact final float width
+    // Crop canvas to exact final width without clearing the image
     const finalWidth = Math.ceil(recordedWidth.value);
-    if (offscreenCanvas.width !== finalWidth) {
+    const finalHeight = offscreenCanvas.height;
+
+    if (finalWidth > 0 && finalHeight > 0) {
       const temp = document.createElement('canvas');
       temp.width = finalWidth;
-      temp.height = offscreenCanvas.height;
-      temp.getContext('2d').drawImage(offscreenCanvas, 0, 0);
+      temp.height = finalHeight;
+      const tempCtx = temp.getContext('2d');
+      tempCtx.drawImage(offscreenCanvas, 0, 0);
+
       offscreenCanvas = temp;
+      offscreenCtx = tempCtx;
     }
 
     offscreenCanvas.toBlob((blob) => {
@@ -444,27 +449,62 @@ export function useSpectrogram() {
   };
 
   const recordFrame = () => {
-    // Determine how many pixels to slice from WebGL canvas
-    const sliceWidth = Math.max(1, Math.round(controls.speed));
-    recordingAccumulator += controls.speed;
-    const newWidth = recordingAccumulator;
+    const isVertical = vertical.value;
+    const mirrorPos = controls.offset; // 0 to 1, where 1 is far edge, 0.5 is center
 
-    // Canvas 2D automatically retains image when only width is increased.
-    // This is O(1) and fixes the laggy redraw logic.
-    if (offscreenCanvas.width < Math.ceil(newWidth) + sliceWidth) {
-      offscreenCanvas.width = Math.ceil(newWidth) + sliceWidth;
+    // Source slice is ALWAYS exactly 1px from the point of newest data entry
+    let srcX, srcY, srcW, srcH;
+    if (!isVertical) {
+      srcX = Math.round(mirrorPos * (width.value - 1));
+      srcY = 0;
+      srcW = 1;
+      srcH = height.value;
+    } else {
+      srcX = 0;
+      srcY = Math.round(mirrorPos * (height.value - 1));
+      srcW = width.value;
+      srcH = 1;
     }
 
-    const srcX = Math.max(0, Math.round(width.value - sliceWidth));
+    // Destination is ALWAYS exactly 1px wide. No fractional math = no gray lines.
+    const newWidth = recordedWidth.value + 1;
 
-    // Draw slice, scaling it to 'controls.speed' width for fractional speed recording
-    offscreenCtx.drawImage(
-      canvas,
-      srcX, 0, sliceWidth, height.value,
-      recordedWidth.value, 0, controls.speed, height.value
-    );
+    // Resize offscreen canvas if we need more space (back up to temp first to prevent clearing)
+    if (offscreenCanvas.width < newWidth) {
+      const temp = document.createElement('canvas');
+      temp.width = offscreenCanvas.width;
+      temp.height = offscreenCanvas.height;
+      temp.getContext('2d').drawImage(offscreenCanvas, 0, 0);
+
+      // Double the canvas width to avoid frequent resizes
+      offscreenCanvas.width = offscreenCanvas.width * 2;
+      offscreenCtx.drawImage(temp, 0, 0);
+      offscreenCtx.imageSmoothingEnabled = false;
+    }
+
+    // Draw exactly 1 pixel from the WebGL canvas to the offscreen canvas
+    if (!isVertical) {
+      offscreenCtx.drawImage(
+        canvas,
+        srcX, srcY, srcW, srcH,
+        recordedWidth.value, 0, 1, height.value
+      );
+    } else {
+      offscreenCtx.drawImage(
+        canvas,
+        srcX, srcY, srcW, srcH,
+        0, recordedWidth.value, width.value, 1
+      );
+    }
 
     recordedWidth.value = newWidth;
+  };
+
+  const takeScreenshot = () => {
+    if (!canvas) return;
+    canvas.toBlob((blob) => {
+      pics.push(window.URL.createObjectURL(blob))
+    }, 'image/png');
   };
 
   function clear() {
@@ -494,7 +534,7 @@ export function useSpectrogram() {
   })
 
   return {
-    initiate, startRecording, stopRecording, pics, colorFreq, clear, screen, canvasElement, video, paused, recording, recordedWidth, controls, params, initiated, vertical, width, height, barFrequencies
+    initiate, startRecording, stopRecording, pics, colorFreq, clear, screen, canvasElement, video, paused, recording, recordedWidth, controls, params, initiated, vertical, width, height, barFrequencies, takeScreenshot
   }
 }
 
