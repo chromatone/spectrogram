@@ -6,7 +6,7 @@ const params = {
   steep: { default: 20, min: 3, max: 40, step: 0.001, fixed: 1 },
   speed: { default: 1, min: 0.1, max: 4, step: 0.1, fixed: 1 },
   fftSize: { default: 13, min: 12, max: 14, step: 1, fixed: 0 },
-  smooth: { default: 0, min: 0, max: 1, step: 0.01, fixed: 1 },
+  smooth: { default: 0, min: 0, max: 1, step: 0.01, fixed: 1, hidden: true },
   offset: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2 },
   // Changed speed to allow fractional values (down to 0.1)
   weighting: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },
