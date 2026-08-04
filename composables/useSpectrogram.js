@@ -1,19 +1,25 @@
-
 import { ref, isRef, onMounted, onUnmounted, computed, watch, reactive } from 'vue'
 
+// ---------------------------------------------------------------------------
+// Auditory-model constants — the "science defaults" for the cochleagram.
+// These used to be hidden, user-facing sliders. They're not exposed in the
+// UI anymore, but every one of them is safe to hand-tune right here.
+// ---------------------------------------------------------------------------
+const AUDITORY_BLEND = 1          // Band-shape: 0 = constant-Q (cents-spaced), 1 = ERB (cochlea-realistic)
+const ENERGY_WINDOW_SIGMA = 0.9   // Width (in bin half-widths) of the Gaussian used to integrate FFT energy per band
+const LATERAL_INHIBITION = 0.6    // Spectral contrast between neighboring bands (cochlear lateral suppression), 0 = off
+const TEMPORAL_INTEGRATION = 1    // 0 = flat smoothing speed, 1 = frequency-dependent (bass integrates slower, like the ear)
+const NATIVE_SMOOTHING = 0        // AnalyserNode.smoothingTimeConstant — kept at 0, we do our own integration above
+
+// Only the controls that meaningfully change what you SEE stay user-facing.
 const params = {
   midpoint: { default: 0.3, min: 0, max: 1, step: 0.0001, fixed: 2 },
   steep: { default: 20, min: 3, max: 40, step: 0.001, fixed: 1 },
+  range: { default: 90, min: 40, max: 100, step: 1, fixed: 0, label: 'Dynamic range (dB)' },
+  emph: { default: 3, min: 0, max: 9, step: 0.5, fixed: 1, param: 'EMPH' },
   speed: { default: 1, min: 0.1, max: 4, step: 0.1, fixed: 1 },
-  fftSize: { default: 13, min: 12, max: 14, step: 1, fixed: 0 },
+  fftSize: { default: 13, min: 12, max: 15, step: 1, fixed: 0 },
   offset: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2 },
-
-  smooth: { default: 0, min: 0, max: 1, step: 0.01, fixed: 1, hidden: true },
-  weighting: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },
-  auditory: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },
-  integration: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },
-  sharpen: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2, hidden: true },
-
 }
 
 // WebGL shaders
@@ -34,7 +40,8 @@ uniform float steep, midpoint;
 uniform int vert;      
 uniform int p3;        
 uniform float mirror;
-uniform vec2 texelSize; 
+uniform vec2 texelSize;
+uniform float preEmphasis;
 
 vec3 hsl(float h,float s,float l){
   vec3 rgb=clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)-1.,0.,1.);
@@ -70,16 +77,15 @@ void main(){
   // --- Unified Perceptual Contour (Operating in 0..1 dB space) ---
   float bandFreq = 27.5 * pow(2., freqUV * 111. / 12.);
   
-  // 1. Gentle Pre-emphasis: +3dB/oct above 300Hz. 
-  // In our 0..1 scale (100dB total), 3dB = 0.03.
+  // 1. Pre-emphasis: user-controlled dB/oct above 300Hz (PRAAT-style, default 3dB/oct)
   float octaves = max(0.0, log2(bandFreq / 300.0));
-  float preEmph = octaves * 0.03; 
+  float preEmph = octaves * (preEmphasis * 0.01);
   
   // 2. Subtle Formant Lift: Additive offset for 1-4kHz vocal/energy bands
   float formantLift = smoothstep(0.3, 0.5, freqUV) * smoothstep(0.9, 0.5, freqUV) * 0.06;
   
   // 3. High Roll-off: Attenuates visual hiss at extreme highs
-  float highRollOff = smoothstep(0.85, 1.0, freqUV) * -0.15;
+  float highRollOff = smoothstep(0.85, 1.0, freqUV) * -0.015;
   
   float corrected = val + preEmph + formantLift + highRollOff;
   corrected = clamp(corrected, 0.0, 1.0);
@@ -99,7 +105,7 @@ void main(){
   // 2. Gamma Lightness Curve
   // Pow(v, 0.8) lifts the mids/quieter sounds slightly out of the black,
   // while preventing the loudest sounds from turning into pure white.
-  float light = pow(v, 0.8) * 0.75;
+  float light = pow(v, 0.8) * 0.80;
 
   // 3. Smooth Noise Gate
   // A hard step(.01, v) causes harsh, flickering edges at the noise floor.
@@ -111,11 +117,27 @@ void main(){
    
 `
 
+// Minimal Float32 -> Half-float (Uint16) conversion. Values here are always
+// in [0,1] so we don't need to worry about NaN/Infinity edge cases.
+const _f32 = new Float32Array(1)
+const _u32 = new Uint32Array(_f32.buffer)
+function toHalf(v) {
+  _f32[0] = v
+  const x = _u32[0]
+  const sign = (x >> 16) & 0x8000
+  const exp = (x >> 23) & 0xff
+  const mant = x & 0x7fffff
+  if (exp < 103) return sign
+  if (exp > 142) return sign | 0x7c00
+  if (exp < 113) return sign | ((mant | 0x800000) >> (126 - exp))
+  return sign | ((exp - 112) << 10) | (mant >> 13)
+}
+
 export function useSpectrogram() {
   let canvas, gl, prog, tex, rowBuf
   let audioCtx, analyzer, micSource
   let fftData
-  let bandValues, bandBinLo, bandBinHi
+  let bandValues, bandBinLo, bandBinHi, bandBinCenter, bandBinSigma
   let bandRaw, bandSharp, bandSmooth, bandAlpha
   let prevBandValues = new Float32Array(1024) // Add this for high-speed interpolation
   let numBands = 0
@@ -169,9 +191,7 @@ export function useSpectrogram() {
     gl.enableVertexAttribArray(loc)
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0)
 
-    // Updated uniform cache: replaced 'writeRow' with 'scroll'
-    // Updated uniform cache: added 'texelSize'
-    for (const u of ['tex', 'scroll', 'rows', 'steep', 'midpoint', 'vert', 'p3', 'mirror', 'texelSize'])
+    for (const u of ['tex', 'scroll', 'rows', 'steep', 'midpoint', 'vert', 'p3', 'mirror', 'texelSize', 'preEmphasis'])
       uloc[u] = gl.getUniformLocation(prog, u)
 
     gl.uniform1i(uloc.tex, 0)
@@ -184,13 +204,16 @@ export function useSpectrogram() {
     if (tex) gl.deleteTexture(tex)
     tex = gl.createTexture()
     gl.bindTexture(gl.TEXTURE_2D, tex)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, numBands, texRows, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, null)
+    // R16F: half-float single channel. WebGL2 filters this natively (no
+    // extension needed), giving ~2048x the levels of the old 8-bit texture
+    // and eliminating quantization banding in quiet passages.
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, numBands, texRows, 0, gl.RED, gl.HALF_FLOAT, null)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
 
-    rowBuf = new Uint8Array(numBands)
+    rowBuf = new Uint16Array(numBands)
 
     // Reset accumulators when texture clears/resizes
     scrollPos = 0.0;
@@ -246,9 +269,9 @@ export function useSpectrogram() {
         const freqLoErb = freq - halfErb
         const freqHiErb = freq + halfErb
 
-        const a = controls.auditory
-        const freqLo = freqLoQ + (freqLoErb - freqLoQ) * a
-        const freqHi = freqHiQ + (freqHiErb - freqHiQ) * a
+        // Blend between constant-Q (cents) and ERB (cochlea-realistic) band shapes.
+        const freqLo = freqLoQ + (freqLoErb - freqLoQ) * AUDITORY_BLEND
+        const freqHi = freqHiQ + (freqHiErb - freqHiQ) * AUDITORY_BLEND
 
         tempBands.push({ freq, freqLo, freqHi, note, centsOffset })
       }
@@ -258,6 +281,8 @@ export function useSpectrogram() {
     bandValues = new Float32Array(numBands)
     bandBinLo = new Uint16Array(numBands)
     bandBinHi = new Uint16Array(numBands)
+    bandBinCenter = new Float32Array(numBands)
+    bandBinSigma = new Float32Array(numBands)
     bandRaw = new Float32Array(numBands)
     bandSharp = new Float32Array(numBands)
     bandSmooth = new Float32Array(numBands)
@@ -277,8 +302,13 @@ export function useSpectrogram() {
 
       for (let i = 0; i < numBands; i++) {
         const b = tempBands[i]
-        bandBinLo[i] = Math.max(0, Math.floor(b.freqLo * fftSize / sampleRate))
-        bandBinHi[i] = Math.min(fftSize / 2, Math.ceil(b.freqHi * fftSize / sampleRate))
+        const lo = Math.max(0, Math.floor(b.freqLo * fftSize / sampleRate))
+        const hi = Math.min(fftSize / 2, Math.ceil(b.freqHi * fftSize / sampleRate))
+        bandBinLo[i] = lo
+        bandBinHi[i] = hi
+        bandBinCenter[i] = b.freq * fftSize / sampleRate
+        // Gaussian half-width for the energy-integration window below.
+        bandBinSigma[i] = Math.max(0.5, (hi - lo) / 2 * ENERGY_WINDOW_SIGMA)
       }
     }
 
@@ -297,7 +327,7 @@ export function useSpectrogram() {
       micSource = audioCtx.createMediaStreamSource(stream)
       analyzer = audioCtx.createAnalyser()
       analyzer.fftSize = Math.pow(2, controls.fftSize)
-      analyzer.smoothingTimeConstant = controls.smooth
+      analyzer.smoothingTimeConstant = NATIVE_SMOOTHING
 
       micSource.connect(analyzer)
 
@@ -323,33 +353,41 @@ export function useSpectrogram() {
   function processFFT() {
     analyzer.getFloatFrequencyData(fftData)
 
-    // 1. Raw per-band dB amplitude (Peak picking, mapped to 0..1 perceptual scale)
+    // 1. Auditory energy integration: a Gaussian-weighted sum of linear power
+    // across each band's FFT bins (cochlea-like integration), rather than
+    // taking the single loudest bin. This is steadier and less noise-driven
+    // than peak-picking, especially for the few bins available at low
+    // frequencies.
+    const dynamicRange = controls.range
     for (let i = 0; i < numBands; i++) {
-      let maxDb = -100
-      for (let j = bandBinLo[i]; j <= bandBinHi[i]; j++) {
-        if (fftData[j] > maxDb) maxDb = fftData[j]
+      const lo = bandBinLo[i], hi = bandBinHi[i]
+      const centerBin = bandBinCenter[i], sigma = bandBinSigma[i]
+      let weightSum = 0, powerSum = 0
+      for (let j = lo; j <= hi; j++) {
+        const d = (j - centerBin) / sigma
+        const w = Math.exp(-0.5 * d * d)
+        powerSum += Math.pow(10, fftData[j] / 10) * w
+        weightSum += w
       }
-      // Map -100dB..0dB directly to 0.0..1.0
-      bandRaw[i] = Math.max(0, Math.min(1, (maxDb + 100) / 100))
+      const db = 10 * Math.log10(powerSum / weightSum + 1e-12)
+      bandRaw[i] = clamp01((db + dynamicRange) / dynamicRange)
     }
 
-    // 2. Lateral inhibition (Works perfectly on dB scale)
-    const sharpen = controls.sharpen
-    if (sharpen > 0) {
+    // 2. Lateral inhibition (spectral contrast, works on the 0..1 dB scale)
+    if (LATERAL_INHIBITION > 0) {
       for (let i = 0; i < numBands; i++) {
         const prev = bandRaw[i > 0 ? i - 1 : i]
         const next = bandRaw[i < numBands - 1 ? i + 1 : i]
         const lateral = (prev + next) * 0.5
-        bandSharp[i] = Math.max(0, bandRaw[i] + (bandRaw[i] - lateral) * sharpen)
+        bandSharp[i] = Math.max(0, bandRaw[i] + (bandRaw[i] - lateral) * LATERAL_INHIBITION)
       }
     } else {
       bandSharp.set(bandRaw)
     }
 
     // 3. Frequency-dependent temporal integration
-    const integ = controls.integration
     for (let i = 0; i < numBands; i++) {
-      const a = integ > 0 ? (1 - integ) + integ * bandAlpha[i] : 1
+      const a = TEMPORAL_INTEGRATION > 0 ? (1 - TEMPORAL_INTEGRATION) + TEMPORAL_INTEGRATION * bandAlpha[i] : 1
       bandSmooth[i] += (bandSharp[i] - bandSmooth[i]) * a
       bandValues[i] = bandSmooth[i]
     }
@@ -379,7 +417,7 @@ export function useSpectrogram() {
       for (let i = 0; i < numBands; i++) {
         // Interpolate between previous frame and current frame
         const lerpVal = prevBandValues[i] + (bandValues[i] - prevBandValues[i]) * t;
-        rowBuf[i] = Math.min(255, Math.max(0, lerpVal * 255) | 0)
+        rowBuf[i] = toHalf(clamp01(lerpVal))
       }
 
       gl.bindTexture(gl.TEXTURE_2D, tex)
@@ -387,7 +425,7 @@ export function useSpectrogram() {
         gl.TEXTURE_2D, 0,
         0, (currentRow - rowsToWrite + s) % texRows,
         numBands, 1,
-        gl.LUMINANCE, gl.UNSIGNED_BYTE, rowBuf
+        gl.RED, gl.HALF_FLOAT, rowBuf
       )
     }
 
@@ -398,8 +436,8 @@ export function useSpectrogram() {
     gl.uniform1f(uloc.midpoint, controls.midpoint);
     gl.uniform1i(uloc.vert, vertical.value ? 1 : 0);
     gl.uniform1i(uloc.p3, window.matchMedia('(color-gamut: p3)').matches ? 1 : 0);
-    gl.uniform1f(uloc.weighting, controls.weighting);
     gl.uniform1f(uloc.mirror, controls.offset);
+    gl.uniform1f(uloc.preEmphasis, controls.emph);
 
     // Tell the shader the exact size of one texture pixel for the unsharp mask
     gl.uniform2f(uloc.texelSize, 1.0 / numBands, 1.0 / texRows);
@@ -519,14 +557,6 @@ export function useSpectrogram() {
       generateBands()
       initTex()
     }
-  })
-
-  watch(() => controls.smooth, (v) => {
-    if (analyzer) analyzer.smoothingTimeConstant = v
-  })
-
-  watch(() => controls.auditory, () => {
-    if (analyzer) generateBands()
   })
 
   watch(initiated, (v) => {
