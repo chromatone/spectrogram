@@ -1,3 +1,21 @@
+## v0.6.3 (2026-08-16) - Weighing and correct calculations
+
+### 🚀 Performance
+- **Sparse Gaussian Precomputation**: Precompute and normalize Gaussian integration weights during initialization. This eliminates expensive `Math.exp` and `Math.pow` calls from the 60fps `processFFT` loop, significantly reducing CPU overhead.
+
+### ✨ Added
+- **Framerate-Independent Smoothing**: Temporal integration now uses `performance.now()` to calculate true time constants (`tau`). The spectrogram's decay and smoothing behavior is now perfectly consistent across 60Hz, 120Hz, 144Hz, and variable-refresh-rate displays.
+- **Active Perceptual Weighting**: Integrated the previously unused A-weighting (`a(f)`) function to accurately approximate human ear frequency sensitivity during energy integration.
+
+### 🔄 Changed
+- **Mathematical Domain Correction**: Moved perceptual weighting, pre-emphasis (dB/oct), and lateral inhibition into the true **dB domain** *before* dynamic range normalization. This fixes previous unit mismatches where linear offsets were incorrectly applied to normalized `0..1` values in the shader.
+- **Simplified Fragment Shader**: Removed redundant frequency-domain math (formant lift, high roll-off, heavy unsharp mask) from the GLSL shader. The shader now focuses purely on clean visual mapping, relying on the mathematically accurate JS pipeline for perceptual shaping.
+
+### 🐛 Fixed
+- **Visual "Coarse Static"**: Eliminated harsh, flickering edges and double-contrast artifacts caused by applying spectral contrast in both the frequency domain (JS) and spatial domain (GLSL unsharp mask).
+- **Tab-Switching Jumps**: Capped `deltaTime` calculations at 100ms to prevent massive, unnatural smoothing decay spikes when returning to a backgrounded browser tab.
+
+
 ## v0.6.1 (2026-07-21) - Praat-style Definition & Coherent Perceptual Pipeline
 
 ### Added

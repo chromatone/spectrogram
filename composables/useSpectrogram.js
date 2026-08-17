@@ -2,16 +2,13 @@ import { ref, isRef, onMounted, onUnmounted, computed, watch, reactive } from 'v
 
 // ---------------------------------------------------------------------------
 // Auditory-model constants — the "science defaults" for the cochleagram.
-// These used to be hidden, user-facing sliders. They're not exposed in the
-// UI anymore, but every one of them is safe to hand-tune right here.
 // ---------------------------------------------------------------------------
 const AUDITORY_BLEND = 1          // Band-shape: 0 = constant-Q (cents-spaced), 1 = ERB (cochlea-realistic)
 const ENERGY_WINDOW_SIGMA = 0.9   // Width (in bin half-widths) of the Gaussian used to integrate FFT energy per band
 const LATERAL_INHIBITION = 0.6    // Spectral contrast between neighboring bands (cochlear lateral suppression), 0 = off
 const TEMPORAL_INTEGRATION = 1    // 0 = flat smoothing speed, 1 = frequency-dependent (bass integrates slower, like the ear)
-const NATIVE_SMOOTHING = 0        // AnalyserNode.smoothingTimeConstant — kept at 0, we do our own integration above
+const NATIVE_SMOOTHING = 0        // AnalyserNode.smoothingTimeConstant — kept at 0, we do our own integration
 
-// Only the controls that meaningfully change what you SEE stay user-facing.
 const params = {
   midpoint: { default: 0.3, min: 0, max: 1, step: 0.0001, fixed: 2 },
   steep: { default: 20, min: 3, max: 40, step: 0.001, fixed: 1 },
@@ -25,8 +22,8 @@ const params = {
 // WebGL shaders
 const VERT = `#version 300 es
   in vec2 p;
-out vec2 uv;
-void main(){ uv = p * .5 + .5; gl_Position = vec4(p, 0, 1); }
+  out vec2 uv;
+  void main(){ uv = p * .5 + .5; gl_Position = vec4(p, 0, 1); }
 `
 
 const FRAG = `#version 300 es
@@ -41,7 +38,6 @@ uniform int vert;
 uniform int p3;        
 uniform float mirror;
 uniform vec2 texelSize;
-uniform float preEmphasis;
 
 vec3 hsl(float h,float s,float l){
   vec3 rgb=clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)-1.,0.,1.);
@@ -59,66 +55,37 @@ void main(){
 
   float ringOffset = scroll / float(rows);
   float scrolled = mod(timeUV + ringOffset, 1.);
-
   vec2 tc = vec2(freqUV, scrolled);
   
-  // --- Softer 5-Tap Unsharp Mask ---
-  // Prevents the "coarse static" look while keeping harmonics crisp
+  // --- Subtle Spatial Sharpen ---
+  // Value is already perceptually optimized in JS. We only apply a light unsharp mask 
+  // to counteract texture linear filtering blur, preventing "coarse static".
   float center = texture(tex, tc).r;
   float left   = texture(tex, tc - vec2(texelSize.x, 0.0)).r;
   float right  = texture(tex, tc + vec2(texelSize.x, 0.0)).r;
-  float down   = texture(tex, tc - vec2(0.0, texelSize.y)).r;
-  float up     = texture(tex, tc + vec2(0.0, texelSize.y)).r;
   
-  float sharp = 0.6; 
-  float val = center * (1.0 + 4.0 * sharp) - (left + right + down + up) * sharp;
+  float sharp = 0.15; 
+  float val = center * (1.0 + 2.0 * sharp) - (left + right) * sharp;
   val = clamp(val, 0.0, 1.0);
 
-  // --- Unified Perceptual Contour (Operating in 0..1 dB space) ---
-  float bandFreq = 27.5 * pow(2., freqUV * 111. / 12.);
-  
-  // 1. Pre-emphasis: user-controlled dB/oct above 300Hz (PRAAT-style, default 3dB/oct)
-  float octaves = max(0.0, log2(bandFreq / 300.0));
-  float preEmph = octaves * (preEmphasis * 0.01);
-  
-  // 2. Subtle Formant Lift: Additive offset for 1-4kHz vocal/energy bands
-  float formantLift = smoothstep(0.3, 0.5, freqUV) * smoothstep(0.9, 0.5, freqUV) * 0.06;
-  
-  // 3. High Roll-off: Attenuates visual hiss at extreme highs
-  float highRollOff = smoothstep(0.85, 1.0, freqUV) * -0.015;
-  
-  float corrected = val + preEmph + formantLift + highRollOff;
-  corrected = clamp(corrected, 0.0, 1.0);
-
   // Sigmoid contrast
-  float v = 1./(1.+exp(-steep*(corrected-midpoint)));
+  float v = 1. / (1. + exp(-steep * (val - midpoint)));
 
-  // --- Topographic Isobars ---
+  // Topographic Isobars
   v = v - fract(v * 16.0) * 0.025;
 
   float semitones = freqUV * 111.;
   float hue = semitones / 12.;
 
-  // 1. Capped saturation (prevents neon blowouts)
   float sat = clamp(v * 1.1, 0.0, 0.9) * (p3==1 ? 1.1 : 1.0);
-
-  // 2. Gamma Lightness Curve
-  // Pow(v, 0.8) lifts the mids/quieter sounds slightly out of the black,
-  // while preventing the loudest sounds from turning into pure white.
   float light = pow(v, 0.8) * 0.80;
-
-  // 3. Smooth Noise Gate
-  // A hard step(.01, v) causes harsh, flickering edges at the noise floor.
-  // smoothstep gracefully fades the noise floor into true black.
   float gate = smoothstep(0.01, 0.06, v);
 
   c = vec4(hsl(hue, sat, light) * gate, 1.);
 }
-   
 `
 
-// Minimal Float32 -> Half-float (Uint16) conversion. Values here are always
-// in [0,1] so we don't need to worry about NaN/Infinity edge cases.
+// Minimal Float32 -> Half-float (Uint16) conversion.
 const _f32 = new Float32Array(1)
 const _u32 = new Uint32Array(_f32.buffer)
 function toHalf(v) {
@@ -137,34 +104,30 @@ export function useSpectrogram() {
   let canvas, gl, prog, tex, rowBuf
   let audioCtx, analyzer, micSource
   let fftData
+
   let bandValues, bandBinLo, bandBinHi, bandBinCenter, bandBinSigma
   let bandRaw, bandSharp, bandSmooth, bandAlpha
-  let prevBandValues = new Float32Array(1024) // Add this for high-speed interpolation
+  let bandDb, bandDbSharp, bandWeights, bandWeightingDb, bandFreqs
+  let prevBandValues = new Float32Array(1024)
   let numBands = 0
   let animationId
+  let lastTime = 0
 
-  // Accumulator for fractional speed
   let scrollPos = 0.0;
   let lastWrittenRow = -1;
-
   let texRows = 1
   let uloc = {}
 
   const screen = ref()
   const canvasElement = ref()
   const video = ref()
-
   const initiated = ref(false)
   const paused = ref(false)
   const recording = ref(false)
   const recordedWidth = ref(0)
-
   const barFrequencies = ref()
-
   const vertical = useStorage('vertical', false)
-
   const controls = useControls(params)
-
   const { width, height } = useWindowSize()
 
   function mkShader(type, src) {
@@ -191,7 +154,7 @@ export function useSpectrogram() {
     gl.enableVertexAttribArray(loc)
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0)
 
-    for (const u of ['tex', 'scroll', 'rows', 'steep', 'midpoint', 'vert', 'p3', 'mirror', 'texelSize', 'preEmphasis'])
+    for (const u of ['tex', 'scroll', 'rows', 'steep', 'midpoint', 'vert', 'p3', 'mirror', 'texelSize'])
       uloc[u] = gl.getUniformLocation(prog, u)
 
     gl.uniform1i(uloc.tex, 0)
@@ -204,9 +167,6 @@ export function useSpectrogram() {
     if (tex) gl.deleteTexture(tex)
     tex = gl.createTexture()
     gl.bindTexture(gl.TEXTURE_2D, tex)
-    // R16F: half-float single channel. WebGL2 filters this natively (no
-    // extension needed), giving ~2048x the levels of the old 8-bit texture
-    // and eliminating quantization banding in quiet passages.
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, numBands, texRows, 0, gl.RED, gl.HALF_FLOAT, null)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
@@ -214,8 +174,6 @@ export function useSpectrogram() {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
 
     rowBuf = new Uint16Array(numBands)
-
-    // Reset accumulators when texture clears/resizes
     scrollPos = 0.0;
     lastWrittenRow = -1;
     if (bandSmooth) bandSmooth.fill(0)
@@ -244,7 +202,6 @@ export function useSpectrogram() {
   function freqPitch(freq) { return 12 * Math.log2(Number(freq) / 440) }
   function colorFreq(freq, value = 1) { return `hsl(${freqPitch(freq) * 30}, ${value * 100}%, ${value * 75}%)`; }
   function midiToFreq(midi) { return BASE_FREQ * 2 ** ((midi - BASE_NOTE) / 12) }
-  function sigmoid(value) { return 1 / (1 + Math.exp(-controls.steep * (value - controls.midpoint))); }
   function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x }
   function erb(freq) { return 24.7 * (4.37 * freq / 1000 + 1) }
 
@@ -253,48 +210,39 @@ export function useSpectrogram() {
     const halfSub = (subBands - 1) / 2
     const tempBands = []
 
-
     for (let note = MIN_NOTE; note <= MAX_NOTE; note++) {
       const centerFreq = midiToFreq(note)
-
       for (let i = -halfSub; i <= halfSub; i++) {
         const centsOffset = (i / halfSub) * 50
         const freq = centerFreq * 2 ** (centsOffset / 1200)
-
         const centsWidth = 50 / halfSub
         const freqLoQ = freq * 2 ** (-centsWidth / 1200)
         const freqHiQ = freq * 2 ** (centsWidth / 1200)
-
         const halfErb = erb(freq) / (2 * subBands)
         const freqLoErb = freq - halfErb
         const freqHiErb = freq + halfErb
 
-        // Blend between constant-Q (cents) and ERB (cochlea-realistic) band shapes.
         const freqLo = freqLoQ + (freqLoErb - freqLoQ) * AUDITORY_BLEND
         const freqHi = freqHiQ + (freqHiErb - freqHiQ) * AUDITORY_BLEND
-
         tempBands.push({ freq, freqLo, freqHi, note, centsOffset })
       }
     }
 
     numBands = tempBands.length
     bandValues = new Float32Array(numBands)
-    bandBinLo = new Uint16Array(numBands)
-    bandBinHi = new Uint16Array(numBands)
-    bandBinCenter = new Float32Array(numBands)
-    bandBinSigma = new Float32Array(numBands)
+    bandDb = new Float32Array(numBands)
+    bandDbSharp = new Float32Array(numBands)
     bandRaw = new Float32Array(numBands)
     bandSharp = new Float32Array(numBands)
     bandSmooth = new Float32Array(numBands)
     bandAlpha = new Float32Array(numBands)
-    prevBandValues = new Float32Array(numBands) // Add this
+    prevBandValues = new Float32Array(numBands)
+    bandWeightingDb = new Float32Array(numBands)
+    bandFreqs = new Float32Array(numBands)
+    bandWeights = new Array(numBands)
 
-    const logLo = Math.log2(20), logHi = Math.log2(8000)
-    for (let i = 0; i < numBands; i++) {
-      const t = clamp01((Math.log2(tempBands[i].freq) - logLo) / (logHi - logLo))
-      // Tighter range: bass is smooth, treble is responsive but not speckled
-      bandAlpha[i] = 0.2 + t * 0.5
-    }
+    const logLo = Math.log2(tempBands[0].freq)
+    const logHi = Math.log2(tempBands[numBands - 1].freq)
 
     if (analyzer) {
       const sampleRate = audioCtx.sampleRate
@@ -302,13 +250,37 @@ export function useSpectrogram() {
 
       for (let i = 0; i < numBands; i++) {
         const b = tempBands[i]
+        bandFreqs[i] = b.freq
+
+        // 1. Precompute perceptual weighting in dB (ZERO per-frame cost)
+        bandWeightingDb[i] = 20 * Math.log10(a(b.freq) + 1e-12)
+
+        // 2. Adaptive bandAlpha based on actual frequency range
+        const t = clamp01((Math.log2(b.freq) - logLo) / (logHi - logLo))
+        bandAlpha[i] = 0.2 + t * 0.5
+
+        // 3. Precompute SPARSE Gaussian weights
         const lo = Math.max(0, Math.floor(b.freqLo * fftSize / sampleRate))
         const hi = Math.min(fftSize / 2, Math.ceil(b.freqHi * fftSize / sampleRate))
-        bandBinLo[i] = lo
-        bandBinHi[i] = hi
-        bandBinCenter[i] = b.freq * fftSize / sampleRate
-        // Gaussian half-width for the energy-integration window below.
-        bandBinSigma[i] = Math.max(0.5, (hi - lo) / 2 * ENERGY_WINDOW_SIGMA)
+        const centerBin = b.freq * fftSize / sampleRate
+        const sigma = Math.max(0.5, (hi - lo) / 2 * ENERGY_WINDOW_SIGMA)
+
+        const weights = []
+        let weightSum = 0
+        for (let j = lo; j <= hi; j++) {
+          const d = (j - centerBin) / sigma
+          const w = Math.exp(-0.5 * d * d)
+          if (w > 0.005) { // Sparse threshold: ignore negligible tails
+            weights.push({ bin: j, weight: w })
+            weightSum += w
+          }
+        }
+
+        // Normalize weights so they sum to exactly 1.0
+        for (let k = 0; k < weights.length; k++) {
+          weights[k].weight /= weightSum
+        }
+        bandWeights[i] = weights
       }
     }
 
@@ -317,27 +289,22 @@ export function useSpectrogram() {
 
   function initiate() {
     navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: false,
-        autoGainControl: false,
-        noiseSuppression: false,
-      }, video: false
+      audio: { echoCancellation: false, autoGainControl: false, noiseSuppression: false },
+      video: false
     }).then(async stream => {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)()
       micSource = audioCtx.createMediaStreamSource(stream)
       analyzer = audioCtx.createAnalyser()
       analyzer.fftSize = Math.pow(2, controls.fftSize)
       analyzer.smoothingTimeConstant = NATIVE_SMOOTHING
-
       micSource.connect(analyzer)
 
       fftData = new Float32Array(analyzer.frequencyBinCount)
-
       generateBands()
       initTex()
       initiated.value = true
       video.value.play()
-
+      lastTime = performance.now()
       animationId = requestAnimationFrame(render)
 
       document.addEventListener('visibilitychange', () => {
@@ -352,43 +319,62 @@ export function useSpectrogram() {
 
   function processFFT() {
     analyzer.getFloatFrequencyData(fftData)
-
-    // 1. Auditory energy integration: a Gaussian-weighted sum of linear power
-    // across each band's FFT bins (cochlea-like integration), rather than
-    // taking the single loudest bin. This is steadier and less noise-driven
-    // than peak-picking, especially for the few bins available at low
-    // frequencies.
     const dynamicRange = controls.range
+
+    // 1. Ultra-fast sparse weighted energy integration + Perceptual Math
     for (let i = 0; i < numBands; i++) {
-      const lo = bandBinLo[i], hi = bandBinHi[i]
-      const centerBin = bandBinCenter[i], sigma = bandBinSigma[i]
-      let weightSum = 0, powerSum = 0
-      for (let j = lo; j <= hi; j++) {
-        const d = (j - centerBin) / sigma
-        const w = Math.exp(-0.5 * d * d)
-        powerSum += Math.pow(10, fftData[j] / 10) * w
-        weightSum += w
+      let powerSum = 0
+      const weights = bandWeights[i]
+
+      for (let k = 0; k < weights.length; k++) {
+        const { bin, weight } = weights[k]
+        powerSum += Math.pow(10, fftData[bin] / 10) * weight
       }
-      const db = 10 * Math.log10(powerSum / weightSum + 1e-12)
-      bandRaw[i] = clamp01((db + dynamicRange) / dynamicRange)
+
+      let db = 10 * Math.log10(powerSum + 1e-12)
+
+      // Apply precomputed perceptual weighting (A-weighting)
+      db += bandWeightingDb[i]
+
+      // Apply pre-emphasis in TRUE dB space (e.g., 3 dB/oct above 300Hz)
+      const octaves = Math.max(0, Math.log2(bandFreqs[i] / 300))
+      db += octaves * controls.emph
+
+      bandDb[i] = db
     }
 
-    // 2. Lateral inhibition (spectral contrast, works on the 0..1 dB scale)
+    // 2. Lateral Inhibition in dB space (Perceptually accurate spectral contrast)
     if (LATERAL_INHIBITION > 0) {
       for (let i = 0; i < numBands; i++) {
-        const prev = bandRaw[i > 0 ? i - 1 : i]
-        const next = bandRaw[i < numBands - 1 ? i + 1 : i]
+        const prev = bandDb[i > 0 ? i - 1 : i]
+        const next = bandDb[i < numBands - 1 ? i + 1 : i]
         const lateral = (prev + next) * 0.5
-        bandSharp[i] = Math.max(0, bandRaw[i] + (bandRaw[i] - lateral) * LATERAL_INHIBITION)
+        bandDbSharp[i] = bandDb[i] + (bandDb[i] - lateral) * LATERAL_INHIBITION
       }
     } else {
-      bandSharp.set(bandRaw)
+      bandDbSharp.set(bandDb)
     }
 
-    // 3. Frequency-dependent temporal integration
+    // 3. Normalize to 0..1 ONLY AFTER all perceptual math is complete
     for (let i = 0; i < numBands; i++) {
-      const a = TEMPORAL_INTEGRATION > 0 ? (1 - TEMPORAL_INTEGRATION) + TEMPORAL_INTEGRATION * bandAlpha[i] : 1
-      bandSmooth[i] += (bandSharp[i] - bandSmooth[i]) * a
+      bandRaw[i] = clamp01((bandDbSharp[i] + dynamicRange) / dynamicRange)
+    }
+
+    // 4. Framerate-independent temporal integration
+    const now = performance.now()
+    const dt = Math.min((now - lastTime) / 1000, 0.1) // Cap at 100ms to prevent jumps on tab switch
+    lastTime = now
+
+    for (let i = 0; i < numBands; i++) {
+      const alpha60 = TEMPORAL_INTEGRATION > 0
+        ? (1 - TEMPORAL_INTEGRATION) + TEMPORAL_INTEGRATION * bandAlpha[i]
+        : 1
+
+      // Calculate tau based on a 60fps reference (1/60 = 0.01666s)
+      const tau = -0.01666 / Math.log(Math.max(0.001, 1 - alpha60))
+      const a = 1 - Math.exp(-dt / tau) // Framerate-independent smoothing factor
+
+      bandSmooth[i] += (bandRaw[i] - bandSmooth[i]) * a
       bandValues[i] = bandSmooth[i]
     }
   }
@@ -399,23 +385,18 @@ export function useSpectrogram() {
       return
     }
 
-    // 1. Save previous frame's data BEFORE processing the new one
     prevBandValues.set(bandValues)
     processFFT()
 
-    // 2. Accumulate fractional speed
     scrollPos += controls.speed;
     const currentRow = Math.floor(scrollPos);
     let rowsToWrite = currentRow - lastWrittenRow;
     lastWrittenRow = currentRow;
     rowsToWrite = Math.min(rowsToWrite, texRows);
 
-    // 3. Write rows with temporal interpolation to prevent stepping/smudging
     for (let s = 0; s < rowsToWrite; s++) {
       const t = rowsToWrite > 1 ? (s + 1) / rowsToWrite : 1.0;
-
       for (let i = 0; i < numBands; i++) {
-        // Interpolate between previous frame and current frame
         const lerpVal = prevBandValues[i] + (bandValues[i] - prevBandValues[i]) * t;
         rowBuf[i] = toHalf(clamp01(lerpVal))
       }
@@ -429,7 +410,6 @@ export function useSpectrogram() {
       )
     }
 
-    // 4. Set uniforms and draw
     gl.uniform1f(uloc.scroll, scrollPos % texRows);
     gl.uniform1i(uloc.rows, texRows);
     gl.uniform1f(uloc.steep, controls.steep);
@@ -437,36 +417,29 @@ export function useSpectrogram() {
     gl.uniform1i(uloc.vert, vertical.value ? 1 : 0);
     gl.uniform1i(uloc.p3, window.matchMedia('(color-gamut: p3)').matches ? 1 : 0);
     gl.uniform1f(uloc.mirror, controls.offset);
-    gl.uniform1f(uloc.preEmphasis, controls.emph);
-
-    // Tell the shader the exact size of one texture pixel for the unsharp mask
     gl.uniform2f(uloc.texelSize, 1.0 / numBands, 1.0 / texRows);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
 
     if (recording.value) recordFrame()
-
     animationId = requestAnimationFrame(render)
   }
 
   const pics = reactive([])
   let offscreenCanvas, offscreenCtx
-  let recordingAccumulator = 0;
 
   const startRecording = () => {
     offscreenCanvas = document.createElement('canvas');
-    offscreenCanvas.width = 2000; // Start with a buffer, it will resize if needed
+    offscreenCanvas.width = 2000;
     offscreenCanvas.height = vertical.value ? width.value : height.value;
     offscreenCtx = offscreenCanvas.getContext('2d');
-    offscreenCtx.imageSmoothingEnabled = false; // Prevent AA on pixel edges
+    offscreenCtx.imageSmoothingEnabled = false;
     recording.value = Date.now();
-    recordedWidth.value = 0; // Now strictly an integer (pixels)
+    recordedWidth.value = 0;
   };
 
   const stopRecording = () => {
     recording.value = false;
-
-    // Crop canvas to exact final width without clearing the image
     const finalWidth = Math.ceil(recordedWidth.value);
     const finalHeight = offscreenCanvas.height;
 
@@ -476,7 +449,6 @@ export function useSpectrogram() {
       temp.height = finalHeight;
       const tempCtx = temp.getContext('2d');
       tempCtx.drawImage(offscreenCanvas, 0, 0);
-
       offscreenCanvas = temp;
       offscreenCtx = tempCtx;
     }
@@ -488,9 +460,8 @@ export function useSpectrogram() {
 
   const recordFrame = () => {
     const isVertical = vertical.value;
-    const mirrorPos = controls.offset; // 0 to 1, where 1 is far edge, 0.5 is center
+    const mirrorPos = controls.offset;
 
-    // Source slice is ALWAYS exactly 1px from the point of newest data entry
     let srcX, srcY, srcW, srcH;
     if (!isVertical) {
       srcX = Math.round(mirrorPos * (width.value - 1));
@@ -504,37 +475,22 @@ export function useSpectrogram() {
       srcH = 1;
     }
 
-    // Destination is ALWAYS exactly 1px wide. No fractional math = no gray lines.
     const newWidth = recordedWidth.value + 1;
-
-    // Resize offscreen canvas if we need more space (back up to temp first to prevent clearing)
     if (offscreenCanvas.width < newWidth) {
       const temp = document.createElement('canvas');
       temp.width = offscreenCanvas.width;
       temp.height = offscreenCanvas.height;
       temp.getContext('2d').drawImage(offscreenCanvas, 0, 0);
-
-      // Double the canvas width to avoid frequent resizes
       offscreenCanvas.width = offscreenCanvas.width * 2;
       offscreenCtx.drawImage(temp, 0, 0);
       offscreenCtx.imageSmoothingEnabled = false;
     }
 
-    // Draw exactly 1 pixel from the WebGL canvas to the offscreen canvas
     if (!isVertical) {
-      offscreenCtx.drawImage(
-        canvas,
-        srcX, srcY, srcW, srcH,
-        recordedWidth.value, 0, 1, height.value
-      );
+      offscreenCtx.drawImage(canvas, srcX, srcY, srcW, srcH, recordedWidth.value, 0, 1, height.value);
     } else {
-      offscreenCtx.drawImage(
-        canvas,
-        srcX, srcY, srcW, srcH,
-        0, recordedWidth.value, width.value, 1
-      );
+      offscreenCtx.drawImage(canvas, srcX, srcY, srcW, srcH, 0, recordedWidth.value, width.value, 1);
     }
-
     recordedWidth.value = newWidth;
   };
 
@@ -559,14 +515,15 @@ export function useSpectrogram() {
     }
   })
 
-  watch(initiated, (v) => {
-    if (v && !barFrequencies.value) barFrequencies.value = barFrequencies.value
-  })
-
   return {
-    initiate, startRecording, stopRecording, pics, colorFreq, clear, screen, canvasElement, video, paused, recording, recordedWidth, controls, params, initiated, vertical, width, height, barFrequencies, takeScreenshot
+    initiate, startRecording, stopRecording, pics, colorFreq, clear, screen, canvasElement, video,
+    paused, recording, recordedWidth, controls, params, initiated, vertical, width, height, barFrequencies, takeScreenshot
   }
 }
+
+// ---------------------------------------------------------------------------
+// Helpers & Weighting Functions
+// ---------------------------------------------------------------------------
 
 function useControls(paramsList) {
   const controls = reactive({})
@@ -579,19 +536,63 @@ function useControls(paramsList) {
 
 function useStorage(key, init) {
   const val = ref(localStorage.getItem(key) ? JSON.parse(localStorage.getItem(key)) : init)
-  return watch(val, v => localStorage.setItem(key, JSON.stringify(v)), { deep: true }), val
+  watch(val, v => localStorage.setItem(key, JSON.stringify(v)), { deep: true })
+  return val
 }
 
 function useWindowSize() {
-  const width = ref(innerWidth), height = ref(innerHeight)
-  const update = () => (width.value = innerWidth, height.value = innerHeight)
-  return onMounted(() => window.addEventListener('resize', update)),
-    onUnmounted(() => window.removeEventListener('resize', update)),
-    { width, height }
+  const width = ref(window.innerWidth), height = ref(window.innerHeight)
+  const update = () => { width.value = window.innerWidth; height.value = window.innerHeight }
+  onMounted(() => window.addEventListener('resize', update))
+  onUnmounted(() => window.removeEventListener('resize', update))
+  return { width, height }
 }
 
 export function useClamp(v, min, max) {
   const refVal = isRef(v) ? v : ref(v)
   const clamp = n => Math.min(Math.max(n, min), max)
   return computed({ get: () => clamp(refVal.value), set: val => refVal.value = clamp(val) })
+}
+
+// A-weighting: approximates human ear frequency sensitivity
+export function a(f) {
+  let f2 = f * f
+  return 1.2588966 * 148840000 * f2 * f2 /
+    ((f2 + 424.36) * Math.sqrt((f2 + 11599.29) * (f2 + 544496.41)) * (f2 + 148840000))
+}
+
+// B-weighting: moderate loudness
+export function b(f) {
+  let f2 = f * f
+  return 1.019764760044717 * 148840000 * f * f2 /
+    ((f2 + 424.36) * Math.sqrt(f2 + 25122.25) * (f2 + 148840000))
+}
+
+// C-weighting: high loudness
+export function c(f) {
+  let f2 = f * f
+  return 1.0069316688518042 * 148840000 * f2 /
+    ((f2 + 424.36) * (f2 + 148840000))
+}
+
+// D-weighting: aircraft noise
+export function d(f) {
+  let f2 = f * f
+  return (f / 6.8966888496476e-5) * Math.sqrt(
+    (((1037918.48 - f2) * (1037918.48 - f2) + 1080768.16 * f2) /
+      ((9837328 - f2) * (9837328 - f2) + 11723776 * f2)) / ((f2 + 79919.29) * (f2 + 1345600))
+  )
+}
+
+// ITU-R 468 noise weighting
+export function m(f) {
+  let f2 = f * f
+  let h1 = -4.737338981378384e-24 * f2 * f2 * f2 + 2.043828333606125e-15 * f2 * f2 - 1.363894795463638e-7 * f2 + 1
+  let h2 = 1.306612257412824e-19 * f2 * f2 * f - 2.118150887518656e-11 * f2 * f + 5.559488023498642e-4 * f
+  return 8.128305161640991 * 1.246332637532143e-4 * f / Math.sqrt(h1 * h1 + h2 * h2)
+}
+
+// Z-weighting (zero/flat weighting)
+export function z() {
+  return 1
 }
