@@ -57,6 +57,11 @@ const frequency = computed(() => {
   return barFrequencies.value[clampedIndex].freq
 })
 
+const cursorX = computed(() => Math.max(0, Math.min(winW.value, x.value)))
+const originX = computed(() => controls.offset * winW.value)
+const cursorDistance = computed(() => Math.abs(cursorX.value - originX.value))
+const cursorMilliseconds = computed(() => cursorDistance.value * 1000 / (controls.speed * 60))
+
 function freqPitch(freq, middleA = 440) {
   return 12 * (Math.log(Number(freq) / middleA) / Math.log(2))
 }
@@ -68,10 +73,12 @@ const notes = ['A', 'A#', 'B', 'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#']
 
 <template lang="pug">
 template(v-if="initiated")
-  .w-2px.h-full.absolute.backdrop-blur.z-100(inert :style="{ backgroundColor: colorFreq(frequency), opacity: 0.15, transform: `translate(${x}px,0)` }")
-  .h-2px.w-full.absolute.backdrop-blur.z-100(inert :style="{ backgroundColor: colorFreq(frequency), opacity: 0.15, transform: `translate(0,${y}px)` }")
-  .h-4px.w-4px.absolute.z-150.rounded-4px(inert :style="{ backgroundColor: colorFreq(frequency), transform: `translate(${x - 1}px,${y - 1}px)` }")
-  .z-440.text-white.absolute.text-right.w-110px.p-2.backdrop-blur-lg.bg-dark-100.bg-op-20.transition-opacity(inert :style="{ color: colorFreq(frequency), transform: `translate(${x - 110}px,${y - 65}px)` }") 
+  .w-2px.h-full.absolute.backdrop-blur.z-100(inert :style="{ backgroundColor: colorFreq(frequency), opacity: 0.25, transform: `translate(${x}px,0)` }")
+  .h-2px.w-full.absolute.backdrop-blur.z-100(inert :style="{ backgroundColor: colorFreq(frequency), opacity: 0.25, transform: `translate(0,${y}px)` }")
+  .h-4px.w-4px.absolute.z-150.rounded-4px.bg-white(inert :style="{ transform: `translate(${x - 1}px,${y - 1}px)` }")
+  .absolute.bottom-4.z-150.text-white.text-sm.font-mono.px-2.py-1.rounded.bg-dark-100.bg-op-70.backdrop-blur(inert :style="{ left: `${cursorX}px`, transform: 'translateX(-50%)', color: colorFreq(frequency) }")
+    | {{ cursorMilliseconds.toFixed(0) }} ms
+  .z-440.text-white.absolute.text-right.w-110px.p-2.backdrop-blur-lg.bg-dark-100.bg-op-20.transition-opacity.rounded-lg(inert :style="{ color: colorFreq(frequency), transform: `translate(${90}px,${y - 35}px)` }") 
     .font-bold.text-xl.flex(:style="{ opacity: Math.round((freqPitch(frequency) - Math.floor(freqPitch(frequency))) * 10) % 10 > 0 ? .7 : 1, }") 
       .flex-1
       .p-0 {{ notes[(Math.round(freqPitch(frequency) - .2) % 12 + 12) % 12] }}{{ Math.floor((Math.round(freqPitch(frequency) - .2) - 3) / 12) + 4 }}
@@ -103,7 +110,7 @@ template(v-if="initiated")
         .i-la-github.text-xl
         .p-0  v.{{ version }} 
       .flex.gap-1
-        
+
         .p-0 by
         a.underline(href="https://github.com/davay42" target="_blank") davay42 
         .p-0.op-50 MIT {{ year }}
@@ -114,7 +121,7 @@ template(v-if="initiated")
       :width="width"
       :height="height")
 
-  .flex.absolute.top-6.z-100.text-white.op-20.hover-op-100.transition(v-if="initiated")
+  .flex.absolute.top-12.z-100.text-white.op-20.hover-op-100.transition(v-if="initiated")
     button.p-4.text-xl.select-none.cursor-pointer(@pointerdown="paused = !paused")
       .i-la-play(v-if="paused")
       .i-la-pause(v-else)
@@ -124,7 +131,7 @@ template(v-if="initiated")
     button.p-4.text-xl.select-none.cursor-pointer(@pointerdown="clear()")
       .i-la-trash-alt
 
-  .flex.absolute.bottom-6.mx-auto.z-100.text-white.op-20.hover-op-100.transition(v-if="initiated")
+  .flex.absolute.bottom-12.mx-auto.z-100.text-white.op-20.hover-op-100.transition(v-if="initiated")
     button.p-4.text-xl.select-none.cursor-pointer.transition(
       :style="{ opacity: showVideo ? 1 : 0.5 }"
       @pointerdown="showVideo = !showVideo; showVideo && video?.requestPictureInPicture?.()")
