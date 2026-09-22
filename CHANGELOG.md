@@ -1,3 +1,16 @@
+# Chromatone Spectrogram Changelog
+
+## v0.6.4 (2026-09-22) - Exponential Time Compression & Deep History
+
+### ✨ Added
+- **Exponential Time Compression**: Introduced a new `timeCompress` parameter that applies a non-linear time mapping to the rolling spectrogram. By using an exponential curve with a derivative of exactly `1.0` at the origin, the visual speed at the center remains identical to the linear mode, while older audio layers smoothly decelerate and compress towards the edges to reveal longer historical patterns.
+- **Expanded GPU Ring Buffer**: To support the compressed outer edges and prevent wrapping/repeating recent frames, the WebGL ring buffer texture is now dynamically expanded (up to 8x the screen height, capped at the hardware's `MAX_TEXTURE_SIZE`) to store a significantly deeper history of audio data.
+- **Linear Fallback**: The new time compression dial (0.0 to 3.0) gracefully falls back to the classic linear scrolling mode when set to `0.0`, allowing users to seamlessly toggle between deep-history and real-time views.
+
+### 🚀 Performance
+- **Branchless Shader Math**: Implemented the exponential time mapping using a branchless `max(k, 0.001)` approach in the GLSL fragment shader. This avoids costly `if/else` branching and division-by-zero errors, maintaining flawless GPU performance and avoiding any framerate drops.
+
+
 ## v0.6.3 (2026-08-16) - Weighing and correct calculations
 
 ### 🚀 Performance

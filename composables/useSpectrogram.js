@@ -12,11 +12,13 @@ const NATIVE_SMOOTHING = 0        // AnalyserNode.smoothingTimeConstant — kept
 const params = {
   midpoint: { default: 0.3, min: 0, max: 1, step: 0.0001, fixed: 2 },
   steep: { default: 20, min: 3, max: 40, step: 0.001, fixed: 1 },
-  range: { default: 90, min: 40, max: 100, step: 1, fixed: 0, label: 'Dynamic range (dB)' },
+  range: { default: 100, min: 40, max: 100, step: 1, fixed: 0, label: 'Dynamic range (dB)', hidden: true },
   emph: { default: 3, min: 0, max: 9, step: 0.5, fixed: 1, param: 'EMPH' },
   speed: { default: 1, min: 0.1, max: 4, step: 0.1, fixed: 1 },
   fftSize: { default: 13, min: 12, max: 15, step: 1, fixed: 0 },
   offset: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2 },
+  // New Exponential Compression Parameter
+  timeCompress: { default: 1.5, min: 0.0, max: 3.0, step: 0.1, fixed: 1, label: 'Time compression' },
 }
 
 // WebGL shaders
@@ -38,6 +40,8 @@ uniform int vert;
 uniform int p3;        
 uniform float mirror;
 uniform vec2 texelSize;
+uniform float timeScale;
+uniform float timeCompress;
 
 vec3 hsl(float h,float s,float l){
   vec3 rgb=clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)-1.,0.,1.);
@@ -51,15 +55,26 @@ void main(){
   float side = step(mirror, screenT);
   float zoneWidth = mix(mirror, 1.0 - mirror, side);
   float edgeDist = abs(screenT - mirror) / max(zoneWidth, 1e-5);
-  float timeUV = clamp(1.0 - edgeDist, 0.0, 1.0); 
+  
+  // --- EXPONENTIAL TIME COMPRESSION ---
+  // We use (exp(k*x) - 1)/k. The derivative at x=0 is exactly 1.0, ensuring 
+  // the speed at the origin is identically matched to the linear version.
+  // We use max(timeCompress, 0.001) to avoid branching and 0-division safely.
+  float k = max(timeCompress, 0.001);
+  float tDepthScreens = (exp(k * edgeDist) - 1.0) / k;
+  
+  // Prevent sampling further back than our texture history actually holds
+  tDepthScreens = min(tDepthScreens, timeScale);
+  
+  // Normalize by the actual history multiplier (texture wraps)
+  float tDepth = tDepthScreens / timeScale;
 
   float ringOffset = scroll / float(rows);
-  float scrolled = mod(timeUV + ringOffset, 1.);
+  // Subtract tDepth to go back in time. Add 1000.0 to guarantee positive modulo wrap.
+  float scrolled = mod(ringOffset - tDepth + 1000.0, 1.0); 
   vec2 tc = vec2(freqUV, scrolled);
   
   // --- Subtle Spatial Sharpen ---
-  // Value is already perceptually optimized in JS. We only apply a light unsharp mask 
-  // to counteract texture linear filtering blur, preventing "coarse static".
   float center = texture(tex, tc).r;
   float left   = texture(tex, tc - vec2(texelSize.x, 0.0)).r;
   float right  = texture(tex, tc + vec2(texelSize.x, 0.0)).r;
@@ -116,6 +131,7 @@ export function useSpectrogram() {
   let scrollPos = 0.0;
   let lastWrittenRow = -1;
   let texRows = 1
+  let actualMultiplier = 8
   let uloc = {}
 
   const screen = ref()
@@ -154,7 +170,7 @@ export function useSpectrogram() {
     gl.enableVertexAttribArray(loc)
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0)
 
-    for (const u of ['tex', 'scroll', 'rows', 'steep', 'midpoint', 'vert', 'p3', 'mirror', 'texelSize'])
+    for (const u of ['tex', 'scroll', 'rows', 'steep', 'midpoint', 'vert', 'p3', 'mirror', 'texelSize', 'timeScale', 'timeCompress'])
       uloc[u] = gl.getUniformLocation(prog, u)
 
     gl.uniform1i(uloc.tex, 0)
@@ -162,7 +178,13 @@ export function useSpectrogram() {
 
   function initTex() {
     if (!gl || !numBands) return
-    texRows = vertical.value ? width.value : height.value
+    const HISTORY_MULTIPLIER = 8 // Store 8 screen-heights worth of history to reveal longer patterns
+    const maxTexSize = gl ? (gl.getParameter(gl.MAX_TEXTURE_SIZE) || 8192) : 8192
+    const screenRows = vertical.value ? width.value : height.value
+
+    // Clamp texture size to hardware limits while trying to get deep history
+    texRows = Math.min(Math.floor(screenRows * HISTORY_MULTIPLIER), maxTexSize)
+    actualMultiplier = screenRows > 0 ? texRows / screenRows : HISTORY_MULTIPLIER
 
     if (tex) gl.deleteTexture(tex)
     tex = gl.createTexture()
@@ -418,6 +440,8 @@ export function useSpectrogram() {
     gl.uniform1i(uloc.p3, window.matchMedia('(color-gamut: p3)').matches ? 1 : 0);
     gl.uniform1f(uloc.mirror, controls.offset);
     gl.uniform2f(uloc.texelSize, 1.0 / numBands, 1.0 / texRows);
+    gl.uniform1f(uloc.timeScale, actualMultiplier);
+    gl.uniform1f(uloc.timeCompress, controls.timeCompress);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
 
