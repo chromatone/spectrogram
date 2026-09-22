@@ -7,6 +7,7 @@
 A zero-dependency, scientifically-grounded audio visualization tool built for musicians, researchers, and audio engineers. It bridges the gap between musical analysis (12-TET) and auditory perception (cochlear ERB bands), rendered as a highly crisp, colorized real-time spectrogram.
 
 **Features:**
+- **Chromatone frequency color mapping** - Every A is red 0deg Hue - lower octaves are slightly darker, higher - lighter. Then we make 12 steps of 30 deg and get A#=orange, B=yellow, etc. - coming back to where we started an octave higher. It is actually a continuous mapping of frequency to color.
 - **Cochlear/Musical Hybrid Bands** — Blends Constant-Q musical bands with Equivalent Rectangular Bandwidth (ERB) auditory filters, spanning A0 to C9.
 - **Perceptual dB Pipeline** — Peak-picking FFT gathering and a unified perceptual loudness contour (+3dB pre-emphasis, formant lift, high roll-off) operating in logarithmic dB space.
 - **Lateral Inhibition** — On-center/off-surround spectral sharpening mimics basilar membrane hair cells, separating overlapping harmonics.
