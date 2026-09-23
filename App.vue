@@ -76,15 +76,9 @@ template(v-if="initiated")
   .w-2px.h-full.absolute.backdrop-blur.z-100(inert :style="{ backgroundColor: colorFreq(frequency), opacity: 0.25, transform: `translate(${x}px,0)` }")
   .h-2px.w-full.absolute.backdrop-blur.z-100(inert :style="{ backgroundColor: colorFreq(frequency), opacity: 0.25, transform: `translate(0,${y}px)` }")
   .h-4px.w-4px.absolute.z-150.rounded-4px.bg-white(inert :style="{ transform: `translate(${x - 1}px,${y - 1}px)` }")
-  .absolute.bottom-4.z-150.text-white.text-sm.font-mono.px-2.py-1.rounded.bg-dark-100.bg-op-70.backdrop-blur(inert :style="{ left: `${cursorX}px`, transform: 'translateX(-50%)', color: colorFreq(frequency) }")
-    | {{ cursorMilliseconds.toFixed(0) }} ms
-  .z-440.text-white.absolute.text-right.w-110px.p-2.backdrop-blur-lg.bg-dark-100.bg-op-20.transition-opacity.rounded-lg(inert :style="{ color: colorFreq(frequency), transform: `translate(${90}px,${y - 35}px)` }") 
-    .font-bold.text-xl.flex(:style="{ opacity: Math.round((freqPitch(frequency) - Math.floor(freqPitch(frequency))) * 10) % 10 > 0 ? .7 : 1, }") 
-      .flex-1
-      .p-0 {{ notes[(Math.round(freqPitch(frequency) - .2) % 12 + 12) % 12] }}{{ Math.floor((Math.round(freqPitch(frequency) - .2) - 3) / 12) + 4 }}
-
-
-    .p-0 {{ frequency.toFixed(1) }} Hz  
+  .absolute.bottom-24.z-150.text-white.text-sm.font-mono.px-2.py-1.rounded.bg-dark-100.bg-op-70.backdrop-blur(inert :style="{ left: `${cursorX}px`, transform: 'translateX(-50%)', color: colorFreq(frequency) }")
+    .font-bold.text-xl.flex(:style="{ opacity: Math.round((freqPitch(frequency) - Math.floor(freqPitch(frequency))) * 10) % 10 > 0 ? .7 : 1, }") {{ notes[(Math.round(freqPitch(frequency) - .2) % 12 + 12) % 12] }}{{ Math.floor((Math.round(freqPitch(frequency) - .2) - 3) / 12) + 4 }}
+    .p-0 {{ frequency.toFixed(1) }}&nbsp;Hz  
 
 .flex.flex-col.justify-center.bg-black.relative.w-full.items-center
   .text-center.absolute.m-auto.top-0.w-full.h-full.text-white.flex.flex-col.items-center.justify-center.gap-4.p-4.bg-stone-800(v-if="!initiated") 

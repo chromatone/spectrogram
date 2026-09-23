@@ -1,5 +1,34 @@
 # Chromatone Spectrogram Changelog
 
+## v0.7.1 (2026-09-23) - Correct Compressed-Time Density Rendering
+
+### ✨ Added
+- **Interval-Integrated Time Compression**: The shader now calculates the actual time interval represented by each screen fragment and integrates the ring-buffer texture across that interval. This replaces fragile point sampling in compressed regions and dramatically reduces far-tail flickering.
+- **Dual-Channel Sediment Texture**: The history texture was upgraded from `R16F` to `RG16F`. The red channel stores the total visible band value, while the green channel stores transient detail.
+- **Transient / Sustained Separation**: Added a lightweight temporal model that separates fast percussive detail from slower sustained harmonic energy.
+- **Deep-Time Transient Fade**: In the far compressed tail, transient-rich detail such as high-hats, clicks, and snares now fades into the background, while sustained harmonic architecture remains visible.
+- **Boundary-Safe Time Filtering**: The new temporal integration clamps its sampling window so it does not cross the newest/oldest seam of the ring buffer, preventing wrap-around shimmer.
+
+### 🔄 Changed
+- **Far Tail Rendering Model**: Compressed history is now treated as temporal density rather than a simple scrolled texture. Short events naturally become fainter when compressed into sub-pixel time intervals.
+- **Near-Field Sharpening Preserved**: When the represented time interval is small, the shader still uses the sharp 5-tap ridge-aware pass. In heavily compressed regions, it switches to stable interval integration.
+- **History Buffer Size**: The desired history depth was increased from 8 screen-heights to 12 screen-heights, while remaining capped by the GPU’s `MAX_TEXTURE_SIZE`.
+- **Time Compression Limit**: The maximum `timeCompress` value was tuned to `3.1` to remain safely inside the shader’s `24`-tap filtering budget.
+
+### 🚀 Performance
+- **Adaptive Filtering Cost**: The expensive multi-tap pass is only used where compression actually requires it. The near field remains on the cheaper sharpening path.
+- **No Additional Render Passes**: Density accumulation happens inside the existing single-pass fragment shader.
+- **Efficient Transient Model**: The sustain/transient split runs as an `O(numBands)` per-frame update and does not require extra GPU textures.
+
+### 🐛 Fixed
+- Reduced flickering in the far sediment tail at high time compression and low scroll speeds.
+- Reduced sub-pixel shimmer caused by sampling many compressed time rows as a single texture coordinate.
+- Reduced harsh visibility of distant percussive detail, allowing long-term harmonic structure to remain readable.
+- Reduced seam artifacts near the newest/oldest boundary of the ring buffer.
+
+### 🔭 Next Direction
+- For even higher compression values, the next step is a temporal pyramid / mipmap-style history system. This would allow much deeper time intervals to be averaged without requiring many shader taps, enabling longer visible song structures with stable sediment layers.
+
 ## v0.7.0 (2026-09-22) - Architectural Clarity & Deep Sediment Vision
 
 ### ✨ Added

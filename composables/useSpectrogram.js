@@ -11,34 +11,41 @@ const NATIVE_SMOOTHING = 0        // AnalyserNode.smoothingTimeConstant — kept
 
 // ---------------------------------------------------------------------------
 // Clarity / resolution enhancement constants.
-// These are intentionally conservative defaults: strong enough to make the
-// image noticeably sharper and cleaner, but not so aggressive that they
-// create harsh ringing artifacts.
 // ---------------------------------------------------------------------------
 const PARABOLIC_PEAK_BLEND = 0.8   // How much true sub-bin FFT peak energy is blended into the band estimate
 const ENVELOPE_CONTRAST = 0.35     // Broad spectral high-pass / formant-haze reduction
 const ENVELOPE_RADIUS = 10         // Spectral envelope neighborhood, in bands
-const SOFT_THRESHOLD = 0.15        // Soft noise-floor threshold in shader, 0..1
-const RIDGE_SHARPEN = 0.26         // Sharpening across frequency ridges
-const TEMPORAL_SHARPEN = 0.85      // Mild sharpening along time axis for transients / pitch bends
+const SOFT_THRESHOLD = 0.05        // Soft noise-floor threshold in shader, 0..1
+const RIDGE_SHARPEN = 0.16         // Sharpening across frequency ridges
+const TEMPORAL_SHARPEN = 0.05      // Mild sharpening along time axis for transients / pitch bends
+
+// ---------------------------------------------------------------------------
+// Compressed-time density rendering constants.
+// ---------------------------------------------------------------------------
+const HISTORY_MULTIPLIER = 12      // Desired number of screen-heights of history stored in the GPU ring buffer
+const SUSTAIN_TAU = 0.45           // Time constant for sustained/harmonic background estimation
+const TRANSIENT_ATTACK_TAU = 0.012 // Fast attack time constant for transient detection
+const TRANSIENT_RELEASE_TAU = 0.14 // Release time constant for transient detail
 
 const params = {
   midpoint: { default: 0.3, min: 0, max: 1, step: 0.0001, fixed: 2 },
   steep: { default: 20, min: 3, max: 40, step: 0.001, fixed: 1 },
-  range: { default: 100, min: 90, max: 100, step: 1, hidden: true, fixed: 0, label: 'Dynamic range (dB)' },
+  range: { default: 90, min: 40, max: 100, step: 1, fixed: 0, label: 'Dynamic range (dB)' },
   emph: { default: 3, min: 0, max: 9, step: 0.5, fixed: 1, param: 'EMPH' },
   speed: { default: 1, min: 0.1, max: 4, step: 0.1, fixed: 1 },
-  timeCompress: { default: 1.5, min: 0.0, max: 10.0, step: 0.1, fixed: 1, label: 'Time compression' },
   fftSize: { default: 13, min: 12, max: 15, step: 1, fixed: 0 },
   offset: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2 },
 
+  // Kept safely below the shader's MAX_TIME_TAPS budget.
+  // The fragment shader uses MAX_TIME_TAPS = 24, and log(24) ≈ 3.18.
+  timeCompress: { default: 1.5, min: 0.0, max: 3.1, step: 0.1, fixed: 1, label: 'Time compression' },
 }
 
 // WebGL shaders
 const VERT = `#version 300 es
   in vec2 p;
   out vec2 uv;
-void main(){ uv = p * .5 + .5; gl_Position = vec4(p, 0, 1); }
+  void main(){ uv = p * .5 + .5; gl_Position = vec4(p, 0, 1); }
 `
 
 const FRAG = `#version 300 es
@@ -62,53 +69,129 @@ uniform float softThreshold;
 uniform float sharpFreq;
 uniform float sharpTime;
 
-vec3 hsl(float h, float s, float l){
-  vec3 rgb = clamp(abs(mod(h * 6. + vec3(0, 4, 2), 6.) - 3.) - 1., 0., 1.);
-  return l + s * (rgb - .5) * (1. - abs(2. * l - 1.));
+const int MAX_TIME_TAPS = 24;
+
+vec3 hsl(float h,float s,float l){
+  vec3 rgb=clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)-1.,0.,1.);
+  return l+s*(rgb-.5)*(1.-abs(2.*l-1.));
 }
 
 void main(){
-  float freqUV = vert == 1 ? uv.x : uv.y;
-  float screenT = vert == 1 ? uv.y : uv.x;
+  float freqUV = vert==1 ? uv.x : uv.y;
+  float screenT = vert==1 ? uv.y : uv.x;
 
   float side = step(mirror, screenT);
   float zoneWidth = mix(mirror, 1.0 - mirror, side);
   float edgeDist = abs(screenT - mirror) / max(zoneWidth, 1e-5);
-
+  
   // --- Exponential time compression ---
+  //
   // T(x) = (e^(kx) - 1)/k
   // derivative at x=0 is exactly 1.0, preserving origin speed.
-  float k = max(timeCompress, 0.001);
-  float tDepthScreens = (exp(k * edgeDist) - 1.0) / k;
-  tDepthScreens = min(tDepthScreens, timeScale);
-  float tDepth = tDepthScreens / timeScale;
+  float k = clamp(timeCompress, 0.001, 3.2);
+
+  float rawDepthScreens = (exp(k * edgeDist) - 1.0) / k;
+  float tDepthScreens = min(rawDepthScreens, timeScale);
+  float tDepth = tDepthScreens / max(timeScale, 1e-5);
 
   float ringOffset = scroll / float(rows);
-  float scrolled = mod(ringOffset - tDepth + 1000.0, 1.0); 
-  vec2 tc = vec2(freqUV, scrolled);
+  float centerTime = mod(ringOffset - tDepth + 1000.0, 1.0);
 
-  // --- 2D ridge-aware sharpening ---
+  // --- Correct compressed-time footprint ---
   //
-  // dxx sharpens across frequency ridges.
-  // dyy gives a smaller amount of temporal sharpening, helping transients
-  // and pitch bends without creating excessive time-axis ringing.
-  float center = texture(tex, tc).r;
-  float left = texture(tex, tc - vec2(texelSize.x, 0.0)).r;
-  float right = texture(tex, tc + vec2(texelSize.x, 0.0)).r;
-  float up = texture(tex, tc - vec2(0.0, texelSize.y)).r;
-  float down = texture(tex, tc + vec2(0.0, texelSize.y)).r;
+  // A screen fragment represents an interval of time, not a single instant.
+  // We estimate that interval and integrate the ring-buffer texture over it.
+  float analyticSpan = exp(k * edgeDist) * texelSize.y;
+  float screenSpan = fwidth(tDepth);
+  float fullSpan = max(max(analyticSpan, screenSpan), texelSize.y);
 
-  float dxx = left + right - 2.0 * center;
-  float dyy = up + down - 2.0 * center;
+  // Keep filtering inside the available ring-buffer window.
+  // This prevents sampling across the newest/oldest seam.
+  fullSpan = min(fullSpan, float(MAX_TIME_TAPS) * texelSize.y);
+  float boundary = min(tDepth, 1.0 - tDepth);
+  float halfSpan = min(fullSpan * 0.5, boundary);
+  float span = halfSpan * 2.0;
 
-  float val = center - (sharpFreq * dxx + sharpTime * dyy);
+  vec2 avg;
+
+  if (span <= texelSize.y) {
+    // Near field / low compression:
+    // use the sharper 5-tap ridge-aware pass.
+    vec2 tc = vec2(freqUV, centerTime);
+
+    vec2 cRG = texture(tex, tc).rg;
+    float center = cRG.r;
+
+    float left  = texture(tex, tc - vec2(texelSize.x, 0.0)).r;
+    float right = texture(tex, tc + vec2(texelSize.x, 0.0)).r;
+
+    float dxx = left + right - 2.0 * center;
+
+    // Avoid temporal sharpening across the ring-buffer seam.
+    float dyy = 0.0;
+    if (tDepth > texelSize.y && tDepth < 1.0 - texelSize.y) {
+      float up    = texture(tex, tc - vec2(0.0, texelSize.y)).r;
+      float down  = texture(tex, tc + vec2(0.0, texelSize.y)).r;
+      dyy = up + down - 2.0 * center;
+    }
+
+    float sharpened = center - (sharpFreq * dxx + sharpTime * dyy);
+
+    avg = vec2(sharpened, cRG.g);
+  } else {
+    // Far field / high compression:
+    // integrate over the time interval represented by this fragment.
+    float tapsFloat = clamp(ceil(span / texelSize.y), 1.0, float(MAX_TIME_TAPS));
+    int taps = int(tapsFloat);
+
+    vec2 acc = vec2(0.0);
+    float wsum = 0.0;
+
+    for (int i = 0; i < MAX_TIME_TAPS; i++) {
+      if (i >= taps) break;
+
+      float fi = float(i);
+
+      float u = 0.0;
+      if (taps > 1) {
+        u = fi / float(taps - 1) - 0.5;
+      }
+
+      float offset = u * span;
+
+      // Slight triangular weighting is more stable than a hard box filter.
+      float w = 1.0 - 0.35 * abs(u * 2.0);
+
+      vec2 tci = vec2(
+        freqUV,
+        mod(centerTime + offset + 1000.0, 1.0)
+      );
+
+      acc += texture(tex, tci).rg * w;
+      wsum += w;
+    }
+
+    avg = acc / max(wsum, 1e-5);
+  }
+
+  // Sanitize density values.
+  avg.r = clamp(avg.r, 0.0, 1.0);
+  avg.g = clamp(min(avg.g, avg.r), 0.0, 1.0);
+
+  // --- Transient fade in deep time ---
+  //
+  // Fast percussive detail becomes lower-density sediment in the far tail,
+  // while sustained harmonic structure remains visible.
+  float far = clamp(tDepth, 0.0, 1.0);
+  float tapDensity = clamp(span / texelSize.y, 1.0, float(MAX_TIME_TAPS));
+
+  float transientVis = 1.0 / (1.0 + 0.10 * (tapDensity - 1.0));
+  transientVis *= mix(1.0, 0.25, far);
+
+  float val = avg.r - avg.g * (1.0 - transientVis);
   val = clamp(val, 0.0, 1.0);
 
   // --- Soft threshold / wavelet-style sparsification ---
-  //
-  // This crushes low-level FFT haze to true black while preserving the
-  // upper dynamic range. It is much cleaner than a hard gate and gives
-  // the sedimentary layers more separation.
   float t = clamp(softThreshold, 0.0, 0.95);
   val = max(val - t, 0.0) / max(1.0 - t, 1e-5);
   val = clamp(val, 0.0, 1.0);
@@ -122,7 +205,7 @@ void main(){
   float semitones = freqUV * 111.;
   float hue = semitones / 12.;
 
-  float sat = clamp(v * 1.1, 0.0, 0.9) * (p3 == 1 ? 1.1 : 1.0);
+  float sat = clamp(v * 1.1, 0.0, 0.9) * (p3==1 ? 1.1 : 1.0);
   float light = pow(v, 0.8) * 0.80;
   float gate = smoothstep(0.01, 0.06, v);
 
@@ -155,6 +238,12 @@ export function useSpectrogram() {
   let bandDb, bandDbSharp, bandWeights, bandWeightingDb, bandFreqs
   let bandEnv, bandEnvTmp
 
+  // Density rendering channels:
+  // bandValues       -> total visible value
+  // bandTransient    -> transient detail amount
+  // bandSustain      -> slow sustained background estimate
+  let bandSustain, bandTransient, prevBandTransient
+
   let prevBandValues = new Float32Array(1024)
   let numBands = 0
   let animationId
@@ -163,7 +252,7 @@ export function useSpectrogram() {
   let scrollPos = 0.0;
   let lastWrittenRow = -1;
   let texRows = 1
-  let actualMultiplier = 8
+  let actualMultiplier = HISTORY_MULTIPLIER
   let uloc = {}
 
   const screen = ref()
@@ -216,26 +305,47 @@ export function useSpectrogram() {
   function initTex() {
     if (!gl || !numBands) return
 
-    const HISTORY_MULTIPLIER = 8
     const maxTexSize = gl ? (gl.getParameter(gl.MAX_TEXTURE_SIZE) || 8192) : 8192
     const screenRows = vertical.value ? width.value : height.value
+    const desiredRows = Math.max(1, Math.floor(screenRows * HISTORY_MULTIPLIER))
 
-    texRows = Math.min(Math.floor(screenRows * HISTORY_MULTIPLIER), maxTexSize)
+    texRows = Math.min(desiredRows, maxTexSize)
     actualMultiplier = screenRows > 0 ? texRows / screenRows : HISTORY_MULTIPLIER
 
     if (tex) gl.deleteTexture(tex)
     tex = gl.createTexture()
     gl.bindTexture(gl.TEXTURE_2D, tex)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, numBands, texRows, 0, gl.RED, gl.HALF_FLOAT, null)
+
+    // Two-channel history:
+    // R = total value
+    // G = transient detail
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RG16F,
+      numBands,
+      texRows,
+      0,
+      gl.RG,
+      gl.HALF_FLOAT,
+      null
+    )
+
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
 
-    rowBuf = new Uint16Array(numBands)
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
+
+    rowBuf = new Uint16Array(numBands * 2)
+
     scrollPos = 0.0;
     lastWrittenRow = -1;
+
     if (bandSmooth) bandSmooth.fill(0)
+    if (bandSustain) bandSustain.fill(0)
+    if (bandTransient) bandTransient.fill(0)
   }
 
   const setSize = (w, h) => {
@@ -259,7 +369,7 @@ export function useSpectrogram() {
   const BASE_NOTE = 69
 
   function freqPitch(freq) { return 12 * Math.log2(Number(freq) / 440) }
-  function colorFreq(freq, value = 1) { return `hsl(${freqPitch(freq) * 30}, ${value * 100} %, ${value * 75} %)`; }
+  function colorFreq(freq, value = 1) { return `hsl(${freqPitch(freq) * 30}, ${value * 100}%, ${value * 75}%)`; }
   function midiToFreq(midi) { return BASE_FREQ * 2 ** ((midi - BASE_NOTE) / 12) }
   function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x }
   function erb(freq) { return 24.7 * (4.37 * freq / 1000 + 1) }
@@ -288,6 +398,7 @@ export function useSpectrogram() {
     }
 
     numBands = tempBands.length
+
     bandValues = new Float32Array(numBands)
     bandDb = new Float32Array(numBands)
     bandDbSharp = new Float32Array(numBands)
@@ -302,6 +413,10 @@ export function useSpectrogram() {
 
     bandEnv = new Float32Array(numBands)
     bandEnvTmp = new Float32Array(numBands)
+
+    bandSustain = new Float32Array(numBands)
+    bandTransient = new Float32Array(numBands)
+    prevBandTransient = new Float32Array(numBands)
 
     const logLo = Math.log2(tempBands[0].freq)
     const logHi = Math.log2(tempBands[numBands - 1].freq)
@@ -416,8 +531,6 @@ export function useSpectrogram() {
       let db = 10 * Math.log10(powerSum + 1e-12)
 
       // Parabolic interpolation around the strongest bin.
-      // This gives sub-bin frequency amplitude recovery, making pure tones
-      // and harmonics sharper when they fall between FFT bins.
       let peakDb = maxDb
 
       if (maxBin > 0 && maxBin < fftBins - 1) {
@@ -447,17 +560,11 @@ export function useSpectrogram() {
       peakDb += perceptualDb + emphDb
 
       // Blend the interpolated peak into the integrated energy estimate.
-      // This preserves broadband energy integration while recovering sharp
-      // narrowband peaks.
       bandDb[i] = db + Math.max(0, peakDb - db) * PARABOLIC_PEAK_BLEND
     }
 
     // ---------------------------------------------------------------------
     // 2. Broad spectral envelope contrast.
-    //
-    // This reduces the cloudy "formant haze" by comparing each band to a
-    // smoothed local-maximum spectral envelope. Peaks remain intact, while
-    // valleys are pulled downward, increasing harmonic separation.
     // ---------------------------------------------------------------------
     if (ENVELOPE_CONTRAST > 0) {
       for (let i = 0; i < numBands; i++) {
@@ -526,6 +633,30 @@ export function useSpectrogram() {
       bandSmooth[i] += (bandRaw[i] - bandSmooth[i]) * a
       bandValues[i] = bandSmooth[i]
     }
+
+    // ---------------------------------------------------------------------
+    // 6. Transient / sustained separation for deep-time density rendering.
+    // ---------------------------------------------------------------------
+    const sustainA = 1 - Math.exp(-dt / SUSTAIN_TAU)
+
+    for (let i = 0; i < numBands; i++) {
+      bandSustain[i] += (bandValues[i] - bandSustain[i]) * sustainA
+
+      const transientTarget = Math.max(0, bandValues[i] - bandSustain[i])
+
+      const tau = transientTarget > bandTransient[i]
+        ? TRANSIENT_ATTACK_TAU
+        : TRANSIENT_RELEASE_TAU
+
+      const a = 1 - Math.exp(-dt / tau)
+
+      bandTransient[i] += (transientTarget - bandTransient[i]) * a
+
+      // Transient detail should never exceed the total visible value.
+      if (bandTransient[i] > bandValues[i]) {
+        bandTransient[i] = bandValues[i]
+      }
+    }
   }
 
   function render() {
@@ -535,6 +666,8 @@ export function useSpectrogram() {
     }
 
     prevBandValues.set(bandValues)
+    prevBandTransient.set(bandTransient)
+
     processFFT()
 
     scrollPos += controls.speed;
@@ -545,17 +678,34 @@ export function useSpectrogram() {
 
     for (let s = 0; s < rowsToWrite; s++) {
       const t = rowsToWrite > 1 ? (s + 1) / rowsToWrite : 1.0;
+
       for (let i = 0; i < numBands; i++) {
-        const lerpVal = prevBandValues[i] + (bandValues[i] - prevBandValues[i]) * t;
-        rowBuf[i] = toHalf(clamp01(lerpVal))
+        const lerpTotal =
+          prevBandValues[i] +
+          (bandValues[i] - prevBandValues[i]) * t
+
+        const lerpTransient =
+          prevBandTransient[i] +
+          (bandTransient[i] - prevBandTransient[i]) * t
+
+        const total = clamp01(lerpTotal)
+        const transient = clamp01(Math.min(lerpTransient, total))
+
+        rowBuf[i * 2 + 0] = toHalf(total)
+        rowBuf[i * 2 + 1] = toHalf(transient)
       }
 
       gl.bindTexture(gl.TEXTURE_2D, tex)
       gl.texSubImage2D(
-        gl.TEXTURE_2D, 0,
-        0, (currentRow - rowsToWrite + s) % texRows,
-        numBands, 1,
-        gl.RED, gl.HALF_FLOAT, rowBuf
+        gl.TEXTURE_2D,
+        0,
+        0,
+        (currentRow - rowsToWrite + s) % texRows,
+        numBands,
+        1,
+        gl.RG,
+        gl.HALF_FLOAT,
+        rowBuf
       )
     }
 
