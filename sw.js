@@ -1,4 +1,4 @@
-const CACHE_NAME = 'spectrogram-v.0.6.2'
+const CACHE_NAME = 'spectrogram-v.0.7.1'
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
