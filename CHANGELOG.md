@@ -1,5 +1,49 @@
 # Chromatone Spectrogram Changelog
 
+## v0.7.0 (2026-09-22) - Architectural Clarity & Deep Sediment Vision
+
+### ✨ Added
+- **Sub-Pixel Parabolic Peak Recovery**: Added parabolic interpolation around the strongest FFT bin in each band. This recovers energy that falls between discrete FFT bins, making low notes narrower, high harmonics more legible, and pitch bends smoother.
+- **Spectral Envelope Contrast**: Introduced a broad local-maximum spectral envelope estimator in the dB domain. The envelope is used to reduce cloudy formant/room haze while preserving sharp harmonic peaks, improving separation between simultaneous notes.
+- **Soft-Threshold Sparsification**: Added a wavelet-style soft threshold in the fragment shader. Low-level FFT haze is now pushed toward true black without harsh gating, giving sediment layers cleaner edges and improving micro-contrast.
+- **2D Ridge-Aware Sharpening**: Upgraded the shader sharpening from a simple 1D unsharp mask to an anisotropic 5-tap Laplacian model. Frequency ridges are sharpened strongly, while a smaller amount of temporal sharpening helps transients and pitch bends remain crisp without excessive ringing.
+- **Clarity Constants**: Added internal science constants for tuning the new clarity pipeline: `PARABOLIC_PEAK_BLEND`, `ENVELOPE_CONTRAST`, `ENVELOPE_RADIUS`, `SOFT_THRESHOLD`, `RIDGE_SHARPEN`, and `TEMPORAL_SHARPEN`.
+
+### 🔄 Changed
+- **Clarity Pipeline Order**: The audio pipeline now follows a more coherent perceptual flow:
+  1. FFT energy integration
+  2. Sub-pixel peak recovery
+  3. A-weighting and pre-emphasis
+  4. Broad spectral envelope contrast
+  5. Lateral inhibition
+  6. Dynamic range normalization
+  7. Framerate-independent temporal integration
+- **Shader Sharpening Model**: Replaced the older frequency-only sharpening model with a 2D-aware sharpening model. This improves clarity for both sustained harmonic ridges and fast diagonal transients.
+- **Noise Gate Behavior**: The visual noise gate is now complemented by soft-threshold sparsification, producing cleaner silence between notes while preserving quiet harmonic details.
+- **Chromatone Color Philosophy Preserved**: HSL mapping remains intentionally untouched. The natural brightness character of each hue is preserved because it supports note identity, emotional association, and Chromatone learning.
+
+### 🚀 Performance
+- **No Extra Render Passes**: All new clarity features run within the existing JS audio pipeline and single WebGL draw call.
+- **Efficient Local DSP**: Spectral envelope estimation uses a small localized band neighborhood and remains cheap enough for real-time use.
+- **Branchless GPU Math**: The new shader clarity operations avoid dynamic branching and remain extremely lightweight.
+
+### 🎓 Qualitative Impact
+- Low notes become tighter and more pitch-resolvable.
+- High harmonics become more readable and structurally coherent.
+- Fast transients remain visible but less muddy.
+- With exponential time compression, longer musical structures begin to read as visual architecture rather than merely scrolling color.
+- The overall experience moves closer to a readable sedimentary record of sound.
+
+### 🐛 Fixed
+- Reduced spectral stair-stepping caused by discrete FFT bin placement.
+- Reduced broadband haze and cloudy formant smearing.
+- Reduced gray noise-floor wash that previously lowered layer separation.
+- Reduced blur on pitch-bending harmonics by making sharpening aware of both frequency and time axes.
+
+### 🔭 Known Edge Case / Next Direction
+- At extreme settings such as `timeCompress = 3.0` and very low scroll speeds, the far compressed tail can exhibit subtle flickering. This happens because deeply compressed time layers can become sub-pixel.
+- The intended future direction is **opacity-based sediment accumulation**: far history should be integrated as time-density rather than sampled as a single thin slice. Sustained harmonic structures should remain prominent, while fast percussive details should gracefully fade into the architectural background.
+
 ## v0.6.4 (2026-09-22) - Exponential Time Compression & Deep History
 
 ### ✨ Added

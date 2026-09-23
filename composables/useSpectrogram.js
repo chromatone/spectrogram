@@ -9,29 +9,43 @@ const LATERAL_INHIBITION = 0.6    // Spectral contrast between neighboring bands
 const TEMPORAL_INTEGRATION = 1    // 0 = flat smoothing speed, 1 = frequency-dependent (bass integrates slower, like the ear)
 const NATIVE_SMOOTHING = 0        // AnalyserNode.smoothingTimeConstant — kept at 0, we do our own integration
 
+// ---------------------------------------------------------------------------
+// Clarity / resolution enhancement constants.
+// These are intentionally conservative defaults: strong enough to make the
+// image noticeably sharper and cleaner, but not so aggressive that they
+// create harsh ringing artifacts.
+// ---------------------------------------------------------------------------
+const PARABOLIC_PEAK_BLEND = 0.8   // How much true sub-bin FFT peak energy is blended into the band estimate
+const ENVELOPE_CONTRAST = 0.35     // Broad spectral high-pass / formant-haze reduction
+const ENVELOPE_RADIUS = 10         // Spectral envelope neighborhood, in bands
+const SOFT_THRESHOLD = 0.15        // Soft noise-floor threshold in shader, 0..1
+const RIDGE_SHARPEN = 0.26         // Sharpening across frequency ridges
+const TEMPORAL_SHARPEN = 0.85      // Mild sharpening along time axis for transients / pitch bends
+
 const params = {
   midpoint: { default: 0.3, min: 0, max: 1, step: 0.0001, fixed: 2 },
   steep: { default: 20, min: 3, max: 40, step: 0.001, fixed: 1 },
-  range: { default: 100, min: 40, max: 100, step: 1, fixed: 0, label: 'Dynamic range (dB)', hidden: true },
+  range: { default: 100, min: 90, max: 100, step: 1, hidden: true, fixed: 0, label: 'Dynamic range (dB)' },
   emph: { default: 3, min: 0, max: 9, step: 0.5, fixed: 1, param: 'EMPH' },
   speed: { default: 1, min: 0.1, max: 4, step: 0.1, fixed: 1 },
+  timeCompress: { default: 1.5, min: 0.0, max: 10.0, step: 0.1, fixed: 1, label: 'Time compression' },
   fftSize: { default: 13, min: 12, max: 15, step: 1, fixed: 0 },
   offset: { default: 1, min: 0, max: 1, step: 0.01, fixed: 2 },
-  // New Exponential Compression Parameter
-  timeCompress: { default: 1.5, min: 0.0, max: 3.0, step: 0.1, fixed: 1, label: 'Time compression' },
+
 }
 
 // WebGL shaders
 const VERT = `#version 300 es
   in vec2 p;
   out vec2 uv;
-  void main(){ uv = p * .5 + .5; gl_Position = vec4(p, 0, 1); }
+void main(){ uv = p * .5 + .5; gl_Position = vec4(p, 0, 1); }
 `
 
 const FRAG = `#version 300 es
 precision mediump float;
 in vec2 uv;
 out vec4 c;
+
 uniform sampler2D tex;
 uniform float scroll; 
 uniform int rows;      
@@ -40,47 +54,63 @@ uniform int vert;
 uniform int p3;        
 uniform float mirror;
 uniform vec2 texelSize;
+
 uniform float timeScale;
 uniform float timeCompress;
 
-vec3 hsl(float h,float s,float l){
-  vec3 rgb=clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)-1.,0.,1.);
-  return l+s*(rgb-.5)*(1.-abs(2.*l-1.));
+uniform float softThreshold;
+uniform float sharpFreq;
+uniform float sharpTime;
+
+vec3 hsl(float h, float s, float l){
+  vec3 rgb = clamp(abs(mod(h * 6. + vec3(0, 4, 2), 6.) - 3.) - 1., 0., 1.);
+  return l + s * (rgb - .5) * (1. - abs(2. * l - 1.));
 }
 
 void main(){
-  float freqUV = vert==1 ? uv.x : uv.y;
-  float screenT = vert==1 ? uv.y : uv.x;
+  float freqUV = vert == 1 ? uv.x : uv.y;
+  float screenT = vert == 1 ? uv.y : uv.x;
 
   float side = step(mirror, screenT);
   float zoneWidth = mix(mirror, 1.0 - mirror, side);
   float edgeDist = abs(screenT - mirror) / max(zoneWidth, 1e-5);
-  
-  // --- EXPONENTIAL TIME COMPRESSION ---
-  // We use (exp(k*x) - 1)/k. The derivative at x=0 is exactly 1.0, ensuring 
-  // the speed at the origin is identically matched to the linear version.
-  // We use max(timeCompress, 0.001) to avoid branching and 0-division safely.
+
+  // --- Exponential time compression ---
+  // T(x) = (e^(kx) - 1)/k
+  // derivative at x=0 is exactly 1.0, preserving origin speed.
   float k = max(timeCompress, 0.001);
   float tDepthScreens = (exp(k * edgeDist) - 1.0) / k;
-  
-  // Prevent sampling further back than our texture history actually holds
   tDepthScreens = min(tDepthScreens, timeScale);
-  
-  // Normalize by the actual history multiplier (texture wraps)
   float tDepth = tDepthScreens / timeScale;
 
   float ringOffset = scroll / float(rows);
-  // Subtract tDepth to go back in time. Add 1000.0 to guarantee positive modulo wrap.
   float scrolled = mod(ringOffset - tDepth + 1000.0, 1.0); 
   vec2 tc = vec2(freqUV, scrolled);
-  
-  // --- Subtle Spatial Sharpen ---
+
+  // --- 2D ridge-aware sharpening ---
+  //
+  // dxx sharpens across frequency ridges.
+  // dyy gives a smaller amount of temporal sharpening, helping transients
+  // and pitch bends without creating excessive time-axis ringing.
   float center = texture(tex, tc).r;
-  float left   = texture(tex, tc - vec2(texelSize.x, 0.0)).r;
-  float right  = texture(tex, tc + vec2(texelSize.x, 0.0)).r;
-  
-  float sharp = 0.15; 
-  float val = center * (1.0 + 2.0 * sharp) - (left + right) * sharp;
+  float left = texture(tex, tc - vec2(texelSize.x, 0.0)).r;
+  float right = texture(tex, tc + vec2(texelSize.x, 0.0)).r;
+  float up = texture(tex, tc - vec2(0.0, texelSize.y)).r;
+  float down = texture(tex, tc + vec2(0.0, texelSize.y)).r;
+
+  float dxx = left + right - 2.0 * center;
+  float dyy = up + down - 2.0 * center;
+
+  float val = center - (sharpFreq * dxx + sharpTime * dyy);
+  val = clamp(val, 0.0, 1.0);
+
+  // --- Soft threshold / wavelet-style sparsification ---
+  //
+  // This crushes low-level FFT haze to true black while preserving the
+  // upper dynamic range. It is much cleaner than a hard gate and gives
+  // the sedimentary layers more separation.
+  float t = clamp(softThreshold, 0.0, 0.95);
+  val = max(val - t, 0.0) / max(1.0 - t, 1e-5);
   val = clamp(val, 0.0, 1.0);
 
   // Sigmoid contrast
@@ -92,7 +122,7 @@ void main(){
   float semitones = freqUV * 111.;
   float hue = semitones / 12.;
 
-  float sat = clamp(v * 1.1, 0.0, 0.9) * (p3==1 ? 1.1 : 1.0);
+  float sat = clamp(v * 1.1, 0.0, 0.9) * (p3 == 1 ? 1.1 : 1.0);
   float light = pow(v, 0.8) * 0.80;
   float gate = smoothstep(0.01, 0.06, v);
 
@@ -123,6 +153,8 @@ export function useSpectrogram() {
   let bandValues, bandBinLo, bandBinHi, bandBinCenter, bandBinSigma
   let bandRaw, bandSharp, bandSmooth, bandAlpha
   let bandDb, bandDbSharp, bandWeights, bandWeightingDb, bandFreqs
+  let bandEnv, bandEnvTmp
+
   let prevBandValues = new Float32Array(1024)
   let numBands = 0
   let animationId
@@ -170,19 +202,24 @@ export function useSpectrogram() {
     gl.enableVertexAttribArray(loc)
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0)
 
-    for (const u of ['tex', 'scroll', 'rows', 'steep', 'midpoint', 'vert', 'p3', 'mirror', 'texelSize', 'timeScale', 'timeCompress'])
+    for (const u of [
+      'tex', 'scroll', 'rows', 'steep', 'midpoint', 'vert', 'p3',
+      'mirror', 'texelSize', 'timeScale', 'timeCompress',
+      'softThreshold', 'sharpFreq', 'sharpTime'
+    ]) {
       uloc[u] = gl.getUniformLocation(prog, u)
+    }
 
     gl.uniform1i(uloc.tex, 0)
   }
 
   function initTex() {
     if (!gl || !numBands) return
-    const HISTORY_MULTIPLIER = 8 // Store 8 screen-heights worth of history to reveal longer patterns
+
+    const HISTORY_MULTIPLIER = 8
     const maxTexSize = gl ? (gl.getParameter(gl.MAX_TEXTURE_SIZE) || 8192) : 8192
     const screenRows = vertical.value ? width.value : height.value
 
-    // Clamp texture size to hardware limits while trying to get deep history
     texRows = Math.min(Math.floor(screenRows * HISTORY_MULTIPLIER), maxTexSize)
     actualMultiplier = screenRows > 0 ? texRows / screenRows : HISTORY_MULTIPLIER
 
@@ -222,7 +259,7 @@ export function useSpectrogram() {
   const BASE_NOTE = 69
 
   function freqPitch(freq) { return 12 * Math.log2(Number(freq) / 440) }
-  function colorFreq(freq, value = 1) { return `hsl(${freqPitch(freq) * 30}, ${value * 100}%, ${value * 75}%)`; }
+  function colorFreq(freq, value = 1) { return `hsl(${freqPitch(freq) * 30}, ${value * 100} %, ${value * 75} %)`; }
   function midiToFreq(midi) { return BASE_FREQ * 2 ** ((midi - BASE_NOTE) / 12) }
   function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x }
   function erb(freq) { return 24.7 * (4.37 * freq / 1000 + 1) }
@@ -262,6 +299,9 @@ export function useSpectrogram() {
     bandWeightingDb = new Float32Array(numBands)
     bandFreqs = new Float32Array(numBands)
     bandWeights = new Array(numBands)
+
+    bandEnv = new Float32Array(numBands)
+    bandEnvTmp = new Float32Array(numBands)
 
     const logLo = Math.log2(tempBands[0].freq)
     const logHi = Math.log2(tempBands[numBands - 1].freq)
@@ -341,31 +381,114 @@ export function useSpectrogram() {
 
   function processFFT() {
     analyzer.getFloatFrequencyData(fftData)
-    const dynamicRange = controls.range
 
-    // 1. Ultra-fast sparse weighted energy integration + Perceptual Math
+    const dynamicRange = controls.range
+    const fftBins = fftData.length
+
+    // ---------------------------------------------------------------------
+    // 1. Sparse weighted energy integration + sub-pixel parabolic peak fit.
+    // ---------------------------------------------------------------------
     for (let i = 0; i < numBands; i++) {
-      let powerSum = 0
       const weights = bandWeights[i]
 
+      if (!weights || weights.length === 0) {
+        bandDb[i] = -dynamicRange
+        continue
+      }
+
+      let powerSum = 0
+      let maxDb = -Infinity
+      let maxBin = -1
+
       for (let k = 0; k < weights.length; k++) {
-        const { bin, weight } = weights[k]
-        powerSum += Math.pow(10, fftData[bin] / 10) * weight
+        const bin = weights[k].bin
+        const weight = weights[k].weight
+        const binDb = fftData[bin]
+
+        powerSum += Math.pow(10, binDb / 10) * weight
+
+        if (binDb > maxDb) {
+          maxDb = binDb
+          maxBin = bin
+        }
       }
 
       let db = 10 * Math.log10(powerSum + 1e-12)
 
-      // Apply precomputed perceptual weighting (A-weighting)
-      db += bandWeightingDb[i]
+      // Parabolic interpolation around the strongest bin.
+      // This gives sub-bin frequency amplitude recovery, making pure tones
+      // and harmonics sharper when they fall between FFT bins.
+      let peakDb = maxDb
 
-      // Apply pre-emphasis in TRUE dB space (e.g., 3 dB/oct above 300Hz)
+      if (maxBin > 0 && maxBin < fftBins - 1) {
+        const ym1 = fftData[maxBin - 1]
+        const y0 = fftData[maxBin]
+        const yp1 = fftData[maxBin + 1]
+
+        if (Number.isFinite(ym1) && Number.isFinite(y0) && Number.isFinite(yp1)) {
+          const denom = ym1 - 2 * y0 + yp1
+
+          // For a true local peak, the parabola curvature is negative.
+          if (denom < -1e-6) {
+            let delta = 0.5 * (ym1 - yp1) / denom
+            delta = Math.max(-0.5, Math.min(0.5, delta))
+
+            const interp = y0 - 0.25 * (ym1 - yp1) * delta
+            if (interp > peakDb) peakDb = interp
+          }
+        }
+      }
+
+      const perceptualDb = bandWeightingDb[i]
       const octaves = Math.max(0, Math.log2(bandFreqs[i] / 300))
-      db += octaves * controls.emph
+      const emphDb = octaves * controls.emph
 
-      bandDb[i] = db
+      db += perceptualDb + emphDb
+      peakDb += perceptualDb + emphDb
+
+      // Blend the interpolated peak into the integrated energy estimate.
+      // This preserves broadband energy integration while recovering sharp
+      // narrowband peaks.
+      bandDb[i] = db + Math.max(0, peakDb - db) * PARABOLIC_PEAK_BLEND
     }
 
-    // 2. Lateral Inhibition in dB space (Perceptually accurate spectral contrast)
+    // ---------------------------------------------------------------------
+    // 2. Broad spectral envelope contrast.
+    //
+    // This reduces the cloudy "formant haze" by comparing each band to a
+    // smoothed local-maximum spectral envelope. Peaks remain intact, while
+    // valleys are pulled downward, increasing harmonic separation.
+    // ---------------------------------------------------------------------
+    if (ENVELOPE_CONTRAST > 0) {
+      for (let i = 0; i < numBands; i++) {
+        let m = bandDb[i]
+
+        const lo = Math.max(0, i - ENVELOPE_RADIUS)
+        const hi = Math.min(numBands - 1, i + ENVELOPE_RADIUS)
+
+        for (let j = lo; j <= hi; j++) {
+          if (bandDb[j] > m) m = bandDb[j]
+        }
+
+        bandEnvTmp[i] = m
+      }
+
+      // Light smoothing of the envelope prevents blocky local-max contours.
+      for (let i = 0; i < numBands; i++) {
+        const prev = bandEnvTmp[i > 0 ? i - 1 : i]
+        const curr = bandEnvTmp[i]
+        const next = bandEnvTmp[i < numBands - 1 ? i + 1 : i]
+        bandEnv[i] = (prev + curr + next) / 3
+      }
+
+      for (let i = 0; i < numBands; i++) {
+        bandDb[i] += (bandDb[i] - bandEnv[i]) * ENVELOPE_CONTRAST
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // 3. Lateral inhibition in dB space.
+    // ---------------------------------------------------------------------
     if (LATERAL_INHIBITION > 0) {
       for (let i = 0; i < numBands; i++) {
         const prev = bandDb[i > 0 ? i - 1 : i]
@@ -377,12 +500,16 @@ export function useSpectrogram() {
       bandDbSharp.set(bandDb)
     }
 
-    // 3. Normalize to 0..1 ONLY AFTER all perceptual math is complete
+    // ---------------------------------------------------------------------
+    // 4. Normalize to 0..1 ONLY AFTER all perceptual math is complete.
+    // ---------------------------------------------------------------------
     for (let i = 0; i < numBands; i++) {
       bandRaw[i] = clamp01((bandDbSharp[i] + dynamicRange) / dynamicRange)
     }
 
-    // 4. Framerate-independent temporal integration
+    // ---------------------------------------------------------------------
+    // 5. Framerate-independent temporal integration.
+    // ---------------------------------------------------------------------
     const now = performance.now()
     const dt = Math.min((now - lastTime) / 1000, 0.1) // Cap at 100ms to prevent jumps on tab switch
     lastTime = now
@@ -440,8 +567,13 @@ export function useSpectrogram() {
     gl.uniform1i(uloc.p3, window.matchMedia('(color-gamut: p3)').matches ? 1 : 0);
     gl.uniform1f(uloc.mirror, controls.offset);
     gl.uniform2f(uloc.texelSize, 1.0 / numBands, 1.0 / texRows);
+
     gl.uniform1f(uloc.timeScale, actualMultiplier);
     gl.uniform1f(uloc.timeCompress, controls.timeCompress);
+
+    gl.uniform1f(uloc.softThreshold, SOFT_THRESHOLD);
+    gl.uniform1f(uloc.sharpFreq, RIDGE_SHARPEN);
+    gl.uniform1f(uloc.sharpTime, TEMPORAL_SHARPEN);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
 
